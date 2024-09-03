@@ -154,7 +154,7 @@ function App() {
   }, [offeree, fetchOffereeNFTs]);
 
   const setupContract = (signer) => {
-    const contractAddress = "0xb9B4Abe50Fc0Bf69d79628a669D76F60702E6460";
+    const contractAddress = "0x25C1515B882FaD578172300a839991507Be70b06";
     const nfTradeContract = new ethers.Contract(contractAddress, NFTradeABI, signer);
     setContract(nfTradeContract);
     console.log("Contract set up");

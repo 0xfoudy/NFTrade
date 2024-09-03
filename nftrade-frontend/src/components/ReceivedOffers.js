@@ -10,19 +10,13 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (contract && account && nftContract) {
+    if (contract && account) {
       fetchOffers();
-    } else {
-      setLoading(true);
     }
-  }, [contract, account, nftContract]);
+  }, [contract, account]);
 
   const fetchOffers = async () => {
-    if (!contract || !account || !nftContract) {
-      setError("Contracts or account not initialized");
-      setLoading(false);
-      return;
-    }
+    if (!contract || !account) return;
     setLoading(true);
     setError(null);
     try {
@@ -32,22 +26,32 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
       const offerDetails = await Promise.all(offerIds.map(async (id) => {
         try {
           const offer = await contract.viewOffer(id);
-          console.log(`Raw offer ${id} data:`, offer);
+          console.log(`Offer ${id}:`, offer);
           
           const [offeredNFTsMetadata, requestedNFTsMetadata] = await Promise.all([
-            fetchNFTsMetadata(offer[3]),
-            fetchNFTsMetadata(offer[5])
+            fetchNFTsMetadata(offer.offeredNFTs),
+            fetchNFTsMetadata(offer.requestedNFTs)
           ]);
 
+          // Handle different possible types of offerID
+          let offerId;
+          if (typeof offer.offerID === 'object' && offer.offerID.toNumber) {
+            offerId = offer.offerID.toNumber();
+          } else if (typeof offer.offerID === 'string') {
+            offerId = parseInt(offer.offerID, 10);
+          } else {
+            offerId = Number(offer.offerID);
+          }
+
           return {
-            id: offer[0],
-            from: offer[1],
-            to: offer[2],
+            id: offerId,
+            from: offer.offerer,
+            to: offer.offeree,
             offeredNFTs: offeredNFTsMetadata,
-            offeredUSDC: offer[4],
+            offeredUSDC: offer.offeredUSDC,
             requestedNFTs: requestedNFTsMetadata,
-            requestedUSDC: offer[6],
-            status: offer[7]
+            requestedUSDC: offer.requestedUSDC,
+            status: offer.isAccepted
           };
         } catch (error) {
           console.error(`Error fetching offer ${id}:`, error);
@@ -55,7 +59,7 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
         }
       }));
 
-      const validOffers = offerDetails.filter(offer => offer !== null);
+      const validOffers = offerDetails.filter(offer => offer !== null && offer.id !== 0);
       console.log("Valid fetched offer details:", validOffers);
       setOffers(validOffers);
     } catch (error) {
@@ -132,7 +136,12 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
         autoClose: 5000
       });
 
-      fetchOffers();
+      // Update the local state to reflect the change
+      if (action === 'reject') {
+        setOffers(prevOffers => prevOffers.filter(offer => offer.id !== offerId));
+      } else {
+        fetchOffers(); // Refresh all offers for accept and finalize actions
+      }
     } catch (error) {
       console.error(`Error ${action}ing offer:`, error);
       toast.update(toastId, { 

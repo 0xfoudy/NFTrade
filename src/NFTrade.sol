@@ -11,6 +11,14 @@ contract NFTrade is Ownable{
     uint8 public fees = 150;
     uint16 public FEES_DENUM = 10000;
 
+    enum Status {
+        Pending,
+        Accepted,
+        Rejected,
+        Canceled,
+        Completed
+    }
+
     struct Offer {
         uint256 offerID;
         address offerer;
@@ -19,11 +27,13 @@ contract NFTrade is Ownable{
         uint256 offeredUSDC;
         uint256[] requestedNFTs;
         uint256 requestedUSDC;
-        bool isAccepted;
+        Status status;
     }
 
     // offeree => offerID[]
     mapping(address => uint256[]) userOffersMapping;
+    // offerer => offerID[]
+    mapping(address => uint256[]) OfferedMapping;
     // offerID => Offer
     mapping(uint256 => Offer) offersMapping;
 
@@ -32,14 +42,17 @@ contract NFTrade is Ownable{
     event OfferAccepted(uint256 indexed offerID, address indexed offeree);
     event DealSealed(uint256 indexed offerID, address indexed offerer, address indexed offeree);
     event OfferRejected(uint256 indexed offerID, address indexed offeree);
+    event OfferCanceled(uint256 indexed offerID, address indexed offerer);
+    event FeesUpdated(uint8 newFees);
 
     constructor() Ownable(msg.sender) {}
 
     function makeOffer(uint256[] calldata _offeredNFTs, uint256 _offeredUSDC, uint256[] calldata _requestedNFTs, uint256 _requestedUSDC, address _offeree) public {
         require(isCurrentlyOwner(_offeredNFTs, msg.sender), "You do not own the offered NFTs");
         require(isCurrentlyOwner(_requestedNFTs, _offeree), "Offeree does not own the requested NFTs");
-        Offer memory offer = Offer(++currentID, msg.sender, _offeree, _offeredNFTs, _offeredUSDC, _requestedNFTs, _requestedUSDC, false);
+        Offer memory offer = Offer(++currentID, msg.sender, _offeree, _offeredNFTs, _offeredUSDC, _requestedNFTs, _requestedUSDC, Status.Pending);
         userOffersMapping[_offeree].push(currentID);
+        OfferedMapping[msg.sender].push(currentID);
         offersMapping[currentID] = offer;
         
         // Add this line at the end of the function
@@ -59,7 +72,7 @@ contract NFTrade is Ownable{
     function acceptOffer(uint256 _offerID) public {
         Offer storage offer = offersMapping[_offerID];
         require(msg.sender == offer.offeree, "Caller not offeree");
-        offer.isAccepted = true;
+        offer.status = Status.Accepted;
         
         // Add this line at the end of the function
         emit OfferAccepted(_offerID, msg.sender);
@@ -67,81 +80,80 @@ contract NFTrade is Ownable{
 
     function sealDeal(uint256 _offerID) public {
         Offer memory offer = offersMapping[_offerID];
-        require(offer.isAccepted, "Offer not yet accepted");
+        require(offer.status == Status.Accepted, "Offer not yet accepted");
+        require(offer.status != Status.Completed, "Offer already completed");
         require(msg.sender == offer.offeree || msg.sender == offer.offerer, "Caller unrelated to offer");
 
-        // transfer offerer's NFTs and USDC
-        bool success = safeBatchTransferFrom(offer.offerer, offer.offeree, offer.offeredNFTs);
+        offer.status = Status.Completed;
 
         uint256 feesFromOfferer = offer.offeredUSDC * fees / FEES_DENUM;
         uint256 USDCForOfferee = offer.offeredUSDC - feesFromOfferer;
-        (success, ) = USDC_CONTRACT.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", offer.offerer, owner(), feesFromOfferer));
-        require(success, "Failed to transfer fees from Offerer");
-        (success, ) = USDC_CONTRACT.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", offer.offerer, offer.offeree, USDCForOfferee));
-        require(success, "Failed to transfer USDC from Offerer");
-
-        // transfer offeree's NFTs and USDC
-        success = safeBatchTransferFrom(offer.offeree, offer.offerer, offer.requestedNFTs);
-        require(success, "Failed to transfer NFTs from Offeree");
-
         uint256 feesFromOfferee = offer.requestedUSDC * fees / FEES_DENUM;
         uint256 USDCForOfferer = offer.requestedUSDC - feesFromOfferee;
-        (success, ) = USDC_CONTRACT.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", offer.offeree, owner(), feesFromOfferee));
-        require(success, "Failed to transfer fees from Offeree");
-        (success, ) = USDC_CONTRACT.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", offer.offeree, offer.offerer, USDCForOfferer));
-        require(success, "Failed to transfer USDC from Offeree");
 
-        // Remove the offer from the user's offers mapping
-        uint256[] storage userOffers = userOffersMapping[offer.offeree];
-        for (uint256 i = 0; i < userOffers.length; i++) {
-            if (userOffers[i] == _offerID) {
-                userOffers[i] = userOffers[userOffers.length - 1];
-                userOffers.pop();
-                break;
-            }
-        }
 
-        // Delete the offer from the offers mapping
-        delete offersMapping[_offerID];
+        // transfer NFTs
+        require(safeBatchTransferFrom(offer.offerer, offer.offeree, offer.offeredNFTs), "Offerer's NFT transfer failed");
+        require(safeBatchTransferFrom(offer.offeree, offer.offerer, offer.requestedNFTs), "Offeree's NFT transfer failed");
+
+
+        // transfer USDC
+        require(transferUSDC(offer.offerer, owner(), feesFromOfferer), "Offerer's fee USDC transfer failed");
+        require(transferUSDC(offer.offerer, offer.offeree, USDCForOfferee), "Offerer's USDC transfer failed");
+        require(transferUSDC(offer.offeree, owner(), feesFromOfferee), "Offeree's fee USDC transfer failed");
+        require(transferUSDC(offer.offeree, offer.offerer, USDCForOfferer), "Offeree's USDC transfer failed");
 
         // Emit the DealSealed event
         emit DealSealed(_offerID, offer.offerer, offer.offeree);
     }
 
+    function transferUSDC(address from, address to, uint256 amount) internal returns (bool) {
+        (bool success, ) = USDC_CONTRACT.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", from, to, amount));
+        return success;
+    }
     function safeBatchTransferFrom(address _from, address _to, uint256[] memory _NFTsID) internal returns (bool success){
         for (uint256 i = 0; i < _NFTsID.length; ++i) {
             (success, ) = NFT_CONTRACT.call(abi.encodeWithSignature("safeTransferFrom(address,address,uint256)", _from, _to, _NFTsID[i]));
+            require(success, "Failed to transfer NFT");
         }
+        return true;
     }
 
     function viewReceivedOffers(address _offeree) public view returns (uint256[] memory) {
         return userOffersMapping[_offeree];
     }
 
+    function viewOfferedOffers(address _offerer) public view returns (uint256[] memory) {
+        return OfferedMapping[_offerer];
+    }
+
     function viewOffer(uint256 _offerID) public view returns (Offer memory) {
         return offersMapping[_offerID];
     }
 
+    function cancelOfferedOffer(uint256 _offerID) public {
+        Offer storage offer = offersMapping[_offerID];
+        require(msg.sender == offer.offerer, "Caller not offerer");
+        require(offer.status != Status.Accepted, "Offer already accepted");
+
+        offer.status = Status.Canceled;
+        emit OfferCanceled(_offerID, msg.sender);
+    }
+    
+
     function rejectOffer(uint256 _offerID) public {
         Offer storage offer = offersMapping[_offerID];
         require(msg.sender == offer.offeree, "Caller not offeree");
-        require(!offer.isAccepted, "Offer already accepted");
+        require(offer.status != Status.Accepted, "Offer already accepted");
 
-        // Remove the offer from the user's offers mapping
-        uint256[] storage userOffers = userOffersMapping[msg.sender];
-        for (uint256 i = 0; i < userOffers.length; i++) {
-            if (userOffers[i] == _offerID) {
-                userOffers[i] = userOffers[userOffers.length - 1];
-                userOffers.pop();
-                break;
-            }
-        }
-
-        // Delete the offer from the offers mapping
-        delete offersMapping[_offerID];
-
-        // Emit the OfferRejected event
+        offer.status = Status.Rejected;
         emit OfferRejected(_offerID, msg.sender);
     }
 
+
+    function updateFees(uint8 _newFees) public onlyOwner {
+        require(_newFees <= 300, "Fees cannot exceed 6%");
+        fees = _newFees;
+        emit FeesUpdated(_newFees);
+    }
 }
