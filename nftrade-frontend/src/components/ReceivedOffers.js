@@ -1,13 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Badge, Alert, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import { Card, Button, Badge, Alert, OverlayTrigger, Tooltip, Form } from 'react-bootstrap';
 import { ethers } from 'ethers';
 import { toast } from 'react-toastify';
 import 'bootstrap-icons/font/bootstrap-icons.css';
+
+// Add this enum at the top of your file, outside the component
+const OfferStatus = {
+  Pending: 0,
+  Accepted: 1,
+  Rejected: 2,
+  Canceled: 3,
+  Completed: 4
+};
 
 function ReceivedOffers({ contract, account, darkMode, nftContract }) {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [visibleStatuses, setVisibleStatuses] = useState({
+    [OfferStatus.Pending]: true,
+    [OfferStatus.Accepted]: true,
+    [OfferStatus.Rejected]: true,
+    [OfferStatus.Canceled]: false,
+    [OfferStatus.Completed]: false
+  });
 
   useEffect(() => {
     if (contract && account) {
@@ -43,6 +59,18 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
             offerId = Number(offer.offerID);
           }
 
+          // Handle different possible types of status
+          let status;
+          if (typeof offer.status === 'object' && offer.status.toNumber) {
+            status = offer.status.toNumber();
+          } else if (typeof offer.status === 'string') {
+            status = parseInt(offer.status, 10);
+          } else {
+            status = Number(offer.status);
+          }
+
+          console.log(`Offer ${id} status:`, status);
+
           return {
             id: offerId,
             from: offer.offerer,
@@ -51,7 +79,7 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
             offeredUSDC: offer.offeredUSDC,
             requestedNFTs: requestedNFTsMetadata,
             requestedUSDC: offer.requestedUSDC,
-            status: offer.isAccepted
+            status: status
           };
         } catch (error) {
           console.error(`Error fetching offer ${id}:`, error);
@@ -197,49 +225,89 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
   };
 
   const renderOfferStatus = (status) => {
-    return (
-      <Badge bg={status ? "success" : "warning"}>
-        {status ? "Accepted" : "Pending"}
-      </Badge>
-    );
+    console.log("Rendering status:", status);
+    const statusMap = {
+      [OfferStatus.Pending]: { text: "Pending", bg: "warning" },
+      [OfferStatus.Accepted]: { text: "Accepted", bg: "success" },
+      [OfferStatus.Rejected]: { text: "Rejected", bg: "danger" },
+      [OfferStatus.Canceled]: { text: "Canceled", bg: "secondary" },
+      [OfferStatus.Completed]: { text: "Completed", bg: "primary" }
+    };
+
+    const { text, bg } = statusMap[status] || { text: "Unknown", bg: "light" };
+    return <Badge bg={bg}>{text}</Badge>;
   };
 
   const renderOfferActions = (offer) => {
     console.log(`Offer ${offer.id} status:`, offer.status, typeof offer.status);
 
-    if (offer.status === false) {
-      return (
-        <>
+    switch (Number(offer.status)) {
+      case OfferStatus.Pending:
+        return (
+          <>
+            <Button 
+              variant="success" 
+              onClick={() => handleAcceptOffer(offer.id)}
+              className="me-2"
+            >
+              Accept
+            </Button>
+            <Button 
+              variant="danger" 
+              onClick={() => handleRejectOffer(offer.id)}
+            >
+              Reject
+            </Button>
+          </>
+        );
+      case OfferStatus.Accepted:
+        return (
           <Button 
-            variant="success" 
-            onClick={() => handleAcceptOffer(offer.id)}
-            className="me-2"
+            variant="primary" 
+            onClick={() => handleFinalizeOffer(offer.id)}
           >
-            Accept
+            Finalize
           </Button>
-          <Button 
-            variant="danger" 
-            onClick={() => handleRejectOffer(offer.id)}
-          >
-            Reject
-          </Button>
-        </>
-      );
-    } else if (offer.status === true) {
-      return (
-        <Button 
-          variant="primary" 
-          onClick={() => handleFinalizeOffer(offer.id)}
-        >
-          Finalize
-        </Button>
-      );
+        );
+      default:
+        return null;
     }
-    return null;
   };
 
   const handleAddressClick = (address) => {
     window.open(`https://courtyard.io/user/${address}`, '_blank');
+  };
+
+  const filteredOffers = offers.filter(offer => visibleStatuses[offer.status]);
+
+  const toggleStatus = (status) => {
+    setVisibleStatuses(prev => ({ ...prev, [status]: !prev[status] }));
+  };
+
+  const renderStatusToggles = () => {
+    const statusLabels = {
+      [OfferStatus.Pending]: "Pending",
+      [OfferStatus.Accepted]: "Accepted",
+      [OfferStatus.Rejected]: "Rejected",
+      [OfferStatus.Canceled]: "Canceled",
+      [OfferStatus.Completed]: "Completed"
+    };
+
+    return (
+      <div className="d-flex flex-wrap mb-3">
+        {Object.entries(visibleStatuses).map(([status, isVisible]) => (
+          <Form.Check 
+            key={status}
+            type="switch"
+            id={`show-${statusLabels[status].toLowerCase()}-switch`}
+            label={statusLabels[status]}
+            checked={isVisible}
+            onChange={() => toggleStatus(Number(status))}
+            className="me-3 mb-2"
+          />
+        ))}
+      </div>
+    );
   };
 
   if (loading) {
@@ -253,10 +321,11 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
   return (
     <div>
       <h2 className="section-title">Received Offers</h2>
-      {offers.length === 0 ? (
-        <div>No offers received yet.</div>
+      {renderStatusToggles()}
+      {filteredOffers.length === 0 ? (
+        <div>No offers to display.</div>
       ) : (
-        offers.map((offer) => (
+        filteredOffers.map((offer) => (
           <Card key={offer.id.toString()} className={`mb-3 ${darkMode ? 'text-white bg-dark' : ''}`}>
             <Card.Body>
               <Card.Title>Offer #{offer.id.toString()}</Card.Title>
