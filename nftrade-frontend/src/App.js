@@ -9,6 +9,7 @@ import NFTradeABI from './NFTradeABI.json';
 import './Pokeball.css';
 import NFTBadge from './NFTBadge';
 import ReceivedOffers from './components/ReceivedOffers';
+import MadeOffers from './components/MadeOffers';
 import 'bootstrap-icons/font/bootstrap-icons.css';
 
 const ERC721ABI = [
@@ -622,6 +623,14 @@ function App() {
             </Tab>
             <Tab eventKey="receivedOffers" title="Received Offers">
               <ReceivedOffers 
+                contract={contract} 
+                account={account} 
+                darkMode={darkMode} 
+                nftContract={nftContract}
+              />
+            </Tab>
+            <Tab eventKey="madeOffers" title="Made Offers">
+              <MadeOffers 
                 contract={contract} 
                 account={account} 
                 darkMode={darkMode} 

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Button, Badge, Alert, OverlayTrigger, Tooltip } from 'react-bootstrap';
-import { ethers } from 'ethers';
+import { formatUnits } from 'ethers';
 import { toast } from 'react-toastify';
 import 'bootstrap-icons/font/bootstrap-icons.css';
 
-function ReceivedOffers({ contract, account, darkMode, nftContract }) {
+function MadeOffers({ contract, account, darkMode, nftContract }) {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -20,8 +20,8 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
     setLoading(true);
     setError(null);
     try {
-      const offerIds = await contract.viewReceivedOffers(account);
-      console.log("Received offer IDs:", offerIds);
+      const offerIds = await contract.viewOfferedOffers(account);
+      console.log("Made offer IDs:", offerIds);
 
       const offerDetails = await Promise.all(offerIds.map(async (id) => {
         try {
@@ -91,25 +91,12 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
     }));
   };
 
-  const handleTransaction = async (action, offerId) => {
+  const handleCancelOffer = async (offerId) => {
     let toastId;
     try {
       toastId = toast.loading('Sending transaction...', { autoClose: false });
       
-      let tx;
-      switch (action) {
-        case 'accept':
-          tx = await contract.acceptOffer(offerId);
-          break;
-        case 'reject':
-          tx = await contract.rejectOffer(offerId);
-          break;
-        case 'finalize':
-          tx = await contract.finalizeOffer(offerId);
-          break;
-        default:
-          throw new Error('Invalid action');
-      }
+      const tx = await contract.cancelOfferedOffer(offerId);
 
       const polygonscanUrl = `https://polygonscan.com/tx/${tx.hash}`;
 
@@ -136,18 +123,13 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
         autoClose: 5000
       });
 
-      // Update the local state to reflect the change
-      if (action === 'reject') {
-        setOffers(prevOffers => prevOffers.filter(offer => offer.id !== offerId));
-      } else {
-        fetchOffers(); // Refresh all offers for accept and finalize actions
-      }
+      setOffers(prevOffers => prevOffers.filter(offer => offer.id !== offerId));
     } catch (error) {
-      console.error(`Error ${action}ing offer:`, error);
+      console.error(`Error cancelling offer:`, error);
       toast.update(toastId, { 
         render: (
           <div>
-            Error {action}ing offer: {error.message}
+            Error cancelling offer: {error.message}
             <br />
             Check console for details.
           </div>
@@ -159,9 +141,9 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
     }
   };
 
-  const handleAcceptOffer = (offerId) => handleTransaction('accept', offerId);
-  const handleRejectOffer = (offerId) => handleTransaction('reject', offerId);
-  const handleFinalizeOffer = (offerId) => handleTransaction('finalize', offerId);
+  const handleAddressClick = (address) => {
+    window.open(`https://courtyard.io/user/${address}`, '_blank');
+  };
 
   const renderNFTBadges = (nfts, isOffered) => {
     return (
@@ -204,42 +186,20 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
     );
   };
 
-  const renderOfferActions = (offer) => {
-    console.log(`Offer ${offer.id} status:`, offer.status, typeof offer.status);
-
-    if (offer.status === false) {
-      return (
-        <>
-          <Button 
-            variant="success" 
-            onClick={() => handleAcceptOffer(offer.id)}
-            className="me-2"
-          >
-            Accept
-          </Button>
-          <Button 
-            variant="danger" 
-            onClick={() => handleRejectOffer(offer.id)}
-          >
-            Reject
-          </Button>
-        </>
-      );
-    } else if (offer.status === true) {
-      return (
-        <Button 
-          variant="primary" 
-          onClick={() => handleFinalizeOffer(offer.id)}
-        >
-          Finalize
-        </Button>
-      );
-    }
-    return null;
-  };
-
-  const handleAddressClick = (address) => {
-    window.open(`https://courtyard.io/user/${address}`, '_blank');
+  const renderOfferSection = (title, nfts, usdc, isOffered) => {
+    const bgColor = isOffered ? 'bg-danger bg-opacity-25' : 'bg-info bg-opacity-25';
+    return (
+      <div className={`p-3 rounded mb-3 ${bgColor}`}>
+        <h5>{title}</h5>
+        <div>
+          <strong>NFTs ({nfts.length}):</strong>
+          {renderNFTBadges(nfts, isOffered)}
+        </div>
+        <div>
+          <strong>USDC:</strong> {formatUnits(usdc, 6)} USDC
+        </div>
+      </div>
+    );
   };
 
   if (loading) {
@@ -252,9 +212,9 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
 
   return (
     <div>
-      <h2 className="section-title">Received Offers</h2>
+      <h2 className="section-title">Made Offers</h2>
       {offers.length === 0 ? (
-        <div>No offers received yet.</div>
+        <div>No offers made yet.</div>
       ) : (
         offers.map((offer) => (
           <Card key={offer.id.toString()} className={`mb-3 ${darkMode ? 'text-white bg-dark' : ''}`}>
@@ -276,7 +236,7 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
                     onClick={() => copyToClipboard(offer.from)}
                     className="p-0 ms-2"
                   >
-                    <i className="bi bi-clipboard" style={{ fontSize: '1rem' }}></i>
+                    <i className="bi bi-clipboard"></i>
                   </Button>
                 </div>
                 <div>
@@ -294,35 +254,21 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
                     onClick={() => copyToClipboard(offer.to)}
                     className="p-0 ms-2"
                   >
-                    <i className="bi bi-clipboard" style={{ fontSize: '1rem' }}></i>
+                    <i className="bi bi-clipboard"></i>
                   </Button>
                 </div>
-                <div className="p-3 rounded mb-3 bg-info bg-opacity-25">
-                  <h5>You get:</h5>
-                  <div>
-                    <strong>NFTs ({offer.offeredNFTs.length}):</strong>
-                    {renderNFTBadges(offer.offeredNFTs, true)}
-                  </div>
-                  <div>
-                    <strong>USDC:</strong> {ethers.formatUnits(offer.offeredUSDC, 6)} USDC
-                  </div>
-                </div>
-                <div className="p-3 rounded mb-3 bg-danger bg-opacity-25">
-                  <h5>You give:</h5>
-                  <div>
-                    <strong>NFTs ({offer.requestedNFTs.length}):</strong>
-                    {renderNFTBadges(offer.requestedNFTs, false)}
-                  </div>
-                  <div>
-                    <strong>USDC:</strong> {ethers.formatUnits(offer.requestedUSDC, 6)} USDC
-                  </div>
-                </div>
+                {renderOfferSection("You give:", offer.offeredNFTs, offer.offeredUSDC, true)}
+                {renderOfferSection("You get:", offer.requestedNFTs, offer.requestedUSDC, false)}
                 <div>
                   <strong>Status:</strong> {renderOfferStatus(offer.status)}
                 </div>
               </div>
               <div className="d-flex justify-content-end mt-3">
-                {renderOfferActions(offer)}
+                {offer.status === 0 && (
+                  <Button variant="danger" onClick={() => handleCancelOffer(offer.id)}>
+                    Cancel Offer
+                  </Button>
+                )}
               </div>
             </Card.Body>
           </Card>
@@ -332,4 +278,4 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
   );
 }
 
-export default ReceivedOffers;
+export default MadeOffers;
