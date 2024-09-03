@@ -15,8 +15,16 @@ import 'bootstrap-icons/font/bootstrap-icons.css';
 const ERC721ABI = [
   "function balanceOf(address owner) view returns (uint256)",
   "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
-  "function tokenURI(uint256 tokenId) view returns (string)"
+  "function tokenURI(uint256 tokenId) view returns (string)",
+  "function approve(address operator, uint256 tokenId) public"
 ];
+
+const USDCABI = [
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address operator, uint256 tokenId) public"
+];
+
+const USDC_CONTRACT_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359";
 
 function App() {
   const [contract, setContract] = useState(null);
@@ -38,6 +46,7 @@ function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [activeNFTTab, setActiveNFTTab] = useState('yourNFTs');
   const [nftContract, setNftContract] = useState(null);
+  const [usdcContract, setUsdcContract] = useState(null);
 
   useEffect(() => {
     const init = async () => {
@@ -64,6 +73,13 @@ function App() {
     };
     init();
   }, []);
+
+  useEffect(() => {
+    if (provider) {
+      const usdcContract = new ethers.Contract(USDC_CONTRACT_ADDRESS, USDCABI, provider);
+      setUsdcContract(usdcContract);
+    }
+  }, [provider]);
 
   const fetchOwnedNFTs = useCallback(async () => {
     if (!account || !provider) return;
@@ -226,7 +242,7 @@ function App() {
   };
 
   const makeOffer = async () => {
-    if (!contract) {
+    if (!contract || !nftContract || !usdcContract || !account) {
       toast.error("Please connect your wallet first.");
       return;
     }
@@ -240,8 +256,47 @@ function App() {
     }
 
     try {
-      const toastId = toast.loading('Sending transaction...', { autoClose: false });
-      
+      const toastId = toast.loading('Approving NFTs, USDC, and sending transaction...', { autoClose: false });
+
+      // Get the signer
+      const signer = await provider.getSigner(account);
+      const nftContractWithSigner = nftContract.connect(signer);
+      const usdcContractWithSigner = usdcContract.connect(signer);
+
+      // Approve each offered NFT
+      for (const nft of selectedOfferedNFTs) {
+        const approvalTx = await nftContractWithSigner.approve(contract.target, nft.id);
+        toast.update(toastId, { 
+          render: `Approving NFT ${nft.id}...`, 
+          type: "info", 
+          isLoading: true 
+        });
+        await approvalTx.wait();
+      }
+
+      // Approve USDC
+      if (offeredUSDC !== '0') {
+        toast.update(toastId, { 
+          render: `Approving USDC...`, 
+          type: "info", 
+          isLoading: true 
+        });
+
+        // Get current allowance
+        const currentAllowance = await usdcContractWithSigner.allowance(account, contract.target);
+        const offeredAmount = ethers.parseUnits(offeredUSDC, 6);
+        const newAllowance = currentAllowance + offeredAmount;
+
+        const usdcApprovalTx = await usdcContractWithSigner.approve(contract.target, newAllowance);
+        await usdcApprovalTx.wait();
+      }
+
+      toast.update(toastId, { 
+        render: "Sending offer transaction...", 
+        type: "info", 
+        isLoading: true 
+      });
+
       const tx = await contract.makeOffer(
         selectedOfferedNFTs.map(nft => nft.id),
         ethers.parseUnits(offeredUSDC, 6),
@@ -253,7 +308,7 @@ function App() {
       const polygonscanUrl = `https://polygonscan.com/tx/${tx.hash}`;
 
       toast.update(toastId, { 
-        render: "Transaction sent. Waiting for confirmation...", 
+        render: "Offer transaction sent. Waiting for confirmation...", 
         type: "info", 
         isLoading: true 
       });
@@ -263,7 +318,7 @@ function App() {
       toast.update(toastId, { 
         render: (
           <div>
-            Transaction successful!
+            Offer transaction successful!
             <br />
             <a href={polygonscanUrl} target="_blank" rel="noopener noreferrer">
               View on PolygonScan
@@ -275,7 +330,6 @@ function App() {
         autoClose: 5000
       });
 
-      // Optionally, you can log the URL for debugging
       console.log("PolygonScan URL:", polygonscanUrl);
 
       setSelectedOfferedNFTs([]);
