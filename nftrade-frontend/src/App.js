@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { Container, Row, Col, Button, Form, Card, Pagination, InputGroup } from 'react-bootstrap';
+import { Container, Row, Col, Button, Form, Card, Pagination, InputGroup, Badge, Tabs, Tab, Tooltip, OverlayTrigger } from 'react-bootstrap';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import NFTradeABI from './NFTradeABI.json';
 import './Pokeball.css';
+import NFTBadge from './NFTBadge';
 
 const ERC721ABI = [
   "function balanceOf(address owner) view returns (uint256)",
@@ -15,18 +16,19 @@ function App() {
   const [contract, setContract] = useState(null);
   const [account, setAccount] = useState(null);
   const [provider, setProvider] = useState(null);
-  const [offerID, setOfferID] = useState('');
-  const [offeredNFTs, setOfferedNFTs] = useState('');
-  const [offeredUSDC, setOfferedUSDC] = useState('');
-  const [requestedNFTs, setRequestedNFTs] = useState('');
-  const [requestedUSDC, setRequestedUSDC] = useState('');
   const [offeree, setOfferee] = useState('');
   const [ownedNFTs, setOwnedNFTs] = useState([]);
-  const [nftError, setNftError] = useState(null);
+  const [offereeNFTs, setOffereeNFTs] = useState([]);
+  const [selectedOfferedNFTs, setSelectedOfferedNFTs] = useState([]);
+  const [selectedRequestedNFTs, setSelectedRequestedNFTs] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [nftsPerPage] = useState(15);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('offered');
+  const [nftError, setNftError] = useState(null);
+  const [offeredUSDC, setOfferedUSDC] = useState('0');
+  const [requestedUSDC, setRequestedUSDC] = useState('0');
 
   useEffect(() => {
     const init = async () => {
@@ -54,45 +56,7 @@ function App() {
     init();
   }, []);
 
-  useEffect(() => {
-    if (account && provider) {
-      console.log("Account and provider available, fetching NFTs");
-      fetchOwnedNFTs();
-    }
-  }, [account, provider]);
-
-  const setupContract = (signer) => {
-    const contractAddress = "0xb9B4Abe50Fc0Bf69d79628a669D76F60702E6460";
-    const nfTradeContract = new ethers.Contract(contractAddress, NFTradeABI, signer);
-    setContract(nfTradeContract);
-    console.log("Contract set up");
-  };
-
-  const connectWallet = async () => {
-    if (provider) {
-      try {
-        await window.ethereum.request({ method: 'eth_requestAccounts' });
-        const signer = await provider.getSigner();
-        const address = await signer.getAddress();
-        setAccount(address);
-        console.log("Wallet connected, account:", address);
-        setupContract(signer);
-      } catch (error) {
-        console.error("Failed to connect wallet:", error);
-        alert("Failed to connect wallet. Check console for details.");
-      }
-    } else {
-      alert("Please install MetaMask!");
-    }
-  };
-
-  const disconnectWallet = () => {
-    setAccount(null);
-    setContract(null);
-    setOwnedNFTs([]);
-  };
-
-  const fetchOwnedNFTs = async () => {
+  const fetchOwnedNFTs = useCallback(async () => {
     console.log("fetchOwnedNFTs called");
     console.log("Account:", account);
     console.log("Provider:", provider);
@@ -142,64 +106,92 @@ function App() {
     } finally {
       setIsLoading(false);
     }
+  }, [account, provider]);
+
+  const fetchOffereeNFTs = useCallback(async () => {
+    if (!provider || !offeree) return;
+    setIsLoading(true);
+    const nftContractAddress = "0x251BE3A17Af4892035C37ebf5890F4a4D889dcAD";
+    const nftContract = new ethers.Contract(nftContractAddress, ERC721ABI, provider);
+
+    try {
+      const balance = await nftContract.balanceOf(offeree);
+      const tokenIds = [];
+      for (let i = 0; i < balance; i++) {
+        const tokenId = await nftContract.tokenOfOwnerByIndex(offeree, i);
+        tokenIds.push(tokenId.toString());
+      }
+
+      const nftData = await Promise.all(tokenIds.map(async (id) => {
+        const uri = await nftContract.tokenURI(id);
+        const metadata = await fetch(uri).then(res => res.json());
+        return { id, metadata };
+      }));
+
+      setOffereeNFTs(nftData);
+    } catch (error) {
+      console.error("Error fetching offeree's NFTs:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [provider, offeree]);
+
+  useEffect(() => {
+    if (account && provider) {
+      fetchOwnedNFTs();
+    }
+  }, [account, provider, fetchOwnedNFTs]);
+
+  useEffect(() => {
+    if (offeree) {
+      fetchOffereeNFTs();
+    }
+  }, [offeree, fetchOffereeNFTs]);
+
+  const setupContract = (signer) => {
+    const contractAddress = "0xb9B4Abe50Fc0Bf69d79628a669D76F60702E6460";
+    const nfTradeContract = new ethers.Contract(contractAddress, NFTradeABI, signer);
+    setContract(nfTradeContract);
+    console.log("Contract set up");
   };
 
-  const makeOffer = async () => {
-    if (!contract) return;
-    try {
-      const tx = await contract.makeOffer(
-        offeredNFTs.split(',').map(id => parseInt(id.trim())),
-        ethers.parseUnits(offeredUSDC, 6),
-        requestedNFTs.split(',').map(id => parseInt(id.trim())),
-        ethers.parseUnits(requestedUSDC, 6),
-        offeree
-      );
-      await tx.wait();
-      alert('Offer made successfully!');
-    } catch (error) {
-      console.error('Error making offer:', error);
-      alert('Error making offer. Check console for details.');
+  const connectWallet = async () => {
+    if (provider) {
+      try {
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const signer = await provider.getSigner();
+        const address = await signer.getAddress();
+        setAccount(address);
+        console.log("Wallet connected, account:", address);
+        setupContract(signer);
+      } catch (error) {
+        console.error("Failed to connect wallet:", error);
+        alert("Failed to connect wallet. Check console for details.");
+      }
+    } else {
+      alert("Please install MetaMask!");
     }
   };
 
-  const acceptOffer = async () => {
-    if (!contract) return;
-    try {
-      const tx = await contract.acceptOffer(offerID);
-      await tx.wait();
-      alert('Offer accepted successfully!');
-    } catch (error) {
-      console.error('Error accepting offer:', error);
-      alert('Error accepting offer. Check console for details.');
-    }
+  const disconnectWallet = () => {
+    setAccount(null);
+    setContract(null);
+    setOwnedNFTs([]);
   };
 
-  const rejectOffer = async () => {
-    if (!contract) return;
-    try {
-      const tx = await contract.rejectOffer(offerID);
-      await tx.wait();
-      alert('Offer rejected successfully!');
-    } catch (error) {
-      console.error('Error rejecting offer:', error);
-      alert('Error rejecting offer. Check console for details.');
-    }
+  const toggleNFTSelection = (nft, isOffered) => {
+    const setSelectedNFTs = isOffered ? setSelectedOfferedNFTs : setSelectedRequestedNFTs;
+    setSelectedNFTs(prevSelected => {
+      if (prevSelected.some(selected => selected.id === nft.id)) {
+        return prevSelected.filter(selected => selected.id !== nft.id);
+      } else {
+        return [...prevSelected, nft];
+      }
+    });
   };
 
-  const sealDeal = async () => {
-    if (!contract) return;
-    try {
-      const tx = await contract.sealDeal(offerID);
-      await tx.wait();
-      alert('Deal sealed successfully!');
-    } catch (error) {
-      console.error('Error sealing deal:', error);
-      alert('Error sealing deal. Check console for details.');
-    }
-  };
-
-  // Filter NFTs based on search term
-  const filteredNFTs = ownedNFTs.filter(nft => 
+  // Filter NFTs based on search term and active tab
+  const filteredNFTs = (activeTab === 'offered' ? ownedNFTs : offereeNFTs).filter(nft => 
     nft.metadata.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -215,6 +207,44 @@ function App() {
   const handleSearchChange = (event) => {
     setSearchTerm(event.target.value);
     setCurrentPage(1); // Reset to first page when search term changes
+  };
+
+  const makeOffer = async () => {
+    if (!contract) {
+      alert("Please connect your wallet first.");
+      return;
+    }
+    if (!offeree) {
+      alert("Please enter the offeree's address.");
+      return;
+    }
+    if (selectedOfferedNFTs.length === 0 && offeredUSDC === '0') {
+      alert("Please select at least one NFT to offer or enter an amount of USDC to offer.");
+      return;
+    }
+    if (selectedRequestedNFTs.length === 0 && requestedUSDC === '0') {
+      alert("Please select at least one NFT to request or enter an amount of USDC to request.");
+      return;
+    }
+
+    try {
+      const tx = await contract.makeOffer(
+        selectedOfferedNFTs.map(nft => nft.id),
+        ethers.parseUnits(offeredUSDC, 6),
+        selectedRequestedNFTs.map(nft => nft.id),
+        ethers.parseUnits(requestedUSDC, 6),
+        offeree
+      );
+      await tx.wait();
+      alert('Offer made successfully!');
+      setSelectedOfferedNFTs([]);
+      setSelectedRequestedNFTs([]);
+      setOfferedUSDC('0');
+      setRequestedUSDC('0');
+    } catch (error) {
+      console.error('Error making offer:', error);
+      alert('Error making offer. Check console for details.');
+    }
   };
 
   return (
@@ -233,108 +263,279 @@ function App() {
         </Col>
       </Row>
       {account && (
-        <Row className="mt-3">
-          <Col>
-            <h2>Your Courtyard NFTs</h2>
-            <InputGroup className="mb-3">
-              <Form.Control
-                placeholder="Search NFTs by name"
-                value={searchTerm}
-                onChange={handleSearchChange}
-              />
-              <Button variant="outline-secondary" onClick={() => setSearchTerm('')}>
-                Clear
-              </Button>
-            </InputGroup>
-            {nftError && <p className="text-danger">Error: {nftError}</p>}
-            {isLoading ? (
-              <div className="d-flex justify-content-center my-5">
-                <div className="pokeball">
-                  <div className="pokeball__button"></div>
+        <>
+          <Row className="mt-3">
+            <Col>
+              <h2>NFTs</h2>
+              <Tabs
+                activeKey={activeTab}
+                onSelect={(k) => setActiveTab(k)}
+                className="mb-3"
+              >
+                <Tab eventKey="offered" title="Your NFTs">
+                  {/* Your NFTs content */}
+                </Tab>
+                <Tab eventKey="requested" title="Offeree's NFTs">
+                  {/* Offeree's NFTs content */}
+                </Tab>
+              </Tabs>
+              <InputGroup className="mb-3">
+                <Form.Control
+                  placeholder="Search NFTs by name"
+                  value={searchTerm}
+                  onChange={handleSearchChange}
+                />
+                <Button variant="outline-secondary" onClick={() => setSearchTerm('')}>
+                  Clear
+                </Button>
+              </InputGroup>
+              {nftError && <p className="text-danger">Error: {nftError}</p>}
+              {isLoading ? (
+                <div className="d-flex justify-content-center my-5">
+                  <div className="pokeball">
+                    <div className="pokeball__button"></div>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <>
-                {filteredNFTs.length === 0 && !nftError && <p>No NFTs found matching your search.</p>}
-                <Row xs={2} sm={3} md={4} lg={5} className="g-4">
-                  {currentNFTs.map((nft) => (
-                    <Col key={nft.id}>
-                      <Card style={{ width: '100%', height: '100%' }}>
-                        {nft.metadata.image && (
-                          <Card.Img
-                            variant="top"
-                            src={nft.metadata.image}
-                            style={{ height: '180px', objectFit: 'cover' }}
-                          />
-                        )}
-                        <Card.Body className="p-2">
-                          <Card.Text className="text-center mb-0">
-                            {nft.metadata.name || 'No name available'}
-                          </Card.Text>
-                        </Card.Body>
-                      </Card>
-                    </Col>
-                  ))}
-                </Row>
-                <div className="d-flex justify-content-center mt-4">
-                  <Pagination>
-                    {[...Array(Math.ceil(filteredNFTs.length / nftsPerPage)).keys()].map((number) => (
-                      <Pagination.Item 
-                        key={number + 1} 
-                        active={number + 1 === currentPage}
-                        onClick={() => paginate(number + 1)}
-                      >
-                        {number + 1}
-                      </Pagination.Item>
+              ) : (
+                <>
+                  {filteredNFTs.length === 0 && !nftError && <p>No NFTs found matching your search.</p>}
+                  <Row xs={2} sm={3} md={4} lg={5} className="g-4">
+                    {currentNFTs.map((nft) => (
+                      <Col key={nft.id}>
+                        <Card 
+                          style={{ width: '100%', height: '100%', cursor: 'pointer' }}
+                          onClick={() => toggleNFTSelection(nft, activeTab === 'offered')}
+                          className={
+                            (activeTab === 'offered' ? selectedOfferedNFTs : selectedRequestedNFTs)
+                              .some(selected => selected.id === nft.id) ? 'border-primary' : ''
+                          }
+                        >
+                          {nft.metadata.image && (
+                            <Card.Img
+                              variant="top"
+                              src={nft.metadata.image}
+                              style={{ height: '180px', objectFit: 'cover' }}
+                            />
+                          )}
+                          <Card.Body className="p-2">
+                            <Card.Text className="text-center mb-0">
+                              {nft.metadata.name || 'No name available'}
+                            </Card.Text>
+                          </Card.Body>
+                          {(activeTab === 'offered' ? selectedOfferedNFTs : selectedRequestedNFTs)
+                            .some(selected => selected.id === nft.id) && (
+                            <Badge bg="primary" style={{ position: 'absolute', top: '10px', right: '10px' }}>
+                              Selected
+                            </Badge>
+                          )}
+                        </Card>
+                      </Col>
                     ))}
-                  </Pagination>
-                </div>
-              </>
-            )}
-          </Col>
-        </Row>
-      )}
-      {account && (
-        <Row className="mt-3">
-          <Col>
-            <h2>Make Offer</h2>
-            <Form>
-              <Form.Group>
-                <Form.Label>Offered NFTs (comma-separated IDs)</Form.Label>
-                <Form.Control type="text" value={offeredNFTs} onChange={(e) => setOfferedNFTs(e.target.value)} />
-              </Form.Group>
-              <Form.Group>
-                <Form.Label>Offered USDC</Form.Label>
-                <Form.Control type="text" value={offeredUSDC} onChange={(e) => setOfferedUSDC(e.target.value)} />
-              </Form.Group>
-              <Form.Group>
-                <Form.Label>Requested NFTs (comma-separated IDs)</Form.Label>
-                <Form.Control type="text" value={requestedNFTs} onChange={(e) => setRequestedNFTs(e.target.value)} />
-              </Form.Group>
-              <Form.Group>
-                <Form.Label>Requested USDC</Form.Label>
-                <Form.Control type="text" value={requestedUSDC} onChange={(e) => setRequestedUSDC(e.target.value)} />
-              </Form.Group>
-              <Form.Group>
-                <Form.Label>Offeree Address</Form.Label>
-                <Form.Control type="text" value={offeree} onChange={(e) => setOfferee(e.target.value)} />
-              </Form.Group>
-              <Button variant="primary" onClick={makeOffer}>Make Offer</Button>
-            </Form>
-          </Col>
-          <Col>
-            <h2>Manage Offer</h2>
-            <Form>
-              <Form.Group>
-                <Form.Label>Offer ID</Form.Label>
-                <Form.Control type="text" value={offerID} onChange={(e) => setOfferID(e.target.value)} />
-              </Form.Group>
-              <Button variant="success" onClick={acceptOffer}>Accept Offer</Button>{' '}
-              <Button variant="danger" onClick={rejectOffer}>Reject Offer</Button>{' '}
-              <Button variant="warning" onClick={sealDeal}>Seal Deal</Button>
-            </Form>
-          </Col>
-        </Row>
+                  </Row>
+                  <div className="d-flex justify-content-center mt-4">
+                    <Pagination>
+                      {[...Array(Math.ceil(filteredNFTs.length / nftsPerPage)).keys()].map((number) => (
+                        <Pagination.Item 
+                          key={number + 1} 
+                          active={number + 1 === currentPage}
+                          onClick={() => paginate(number + 1)}
+                        >
+                          {number + 1}
+                        </Pagination.Item>
+                      ))}
+                    </Pagination>
+                  </div>
+                </>
+              )}
+            </Col>
+          </Row>
+          
+          <Row className="mt-5">
+            <Col>
+              <h2>Make Offer</h2>
+              <Form>
+                <Row>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label><strong>Step 1:</strong> Enter Offeree's Address</Form.Label>
+                      <Form.Control 
+                        type="text" 
+                        value={offeree} 
+                        onChange={(e) => setOfferee(e.target.value)}
+                        placeholder="Enter the address of the person you want to trade with"
+                      />
+                      <Form.Text className="text-muted">
+                        This will load their NFTs in the "Offeree's NFTs" tab above.
+                      </Form.Text>
+                    </Form.Group>
+                  </Col>
+                </Row>
+
+                <Row>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label><strong>Step 2:</strong> Select NFTs to Offer</Form.Label>
+                      <p className="text-muted">
+                        Click on your NFTs in the "Your NFTs" tab above to select them for the offer.
+                      </p>
+                      <div className="border rounded p-2" style={{minHeight: '100px', maxHeight: '200px', overflowY: 'auto'}}>
+                        {selectedOfferedNFTs.length === 0 ? (
+                          <p className="text-muted mb-0">No NFTs selected yet</p>
+                        ) : (
+                          <div className="d-flex flex-wrap">
+                            {selectedOfferedNFTs.map(nft => (
+                              <NFTBadge
+                                key={nft.id}
+                                nft={nft}
+                                onClick={() => toggleNFTSelection(nft, true)}
+                                bg="primary"
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </Form.Group>
+
+                    <Form.Group className="mb-3">
+                      <Form.Label>USDC to Offer</Form.Label>
+                      <InputGroup>
+                        <Form.Control 
+                          type="number" 
+                          value={offeredUSDC} 
+                          onChange={(e) => setOfferedUSDC(e.target.value)}
+                          placeholder="Amount of USDC to offer"
+                        />
+                        <InputGroup.Text>USDC</InputGroup.Text>
+                      </InputGroup>
+                    </Form.Group>
+                  </Col>
+
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label><strong>Step 3:</strong> Select NFTs to Request</Form.Label>
+                      <p className="text-muted">
+                        Click on the offeree's NFTs in the "Offeree's NFTs" tab above to select them for your request.
+                      </p>
+                      <div className="border rounded p-2" style={{minHeight: '100px', maxHeight: '200px', overflowY: 'auto'}}>
+                        {selectedRequestedNFTs.length === 0 ? (
+                          <p className="text-muted mb-0">No NFTs selected yet</p>
+                        ) : (
+                          <div className="d-flex flex-wrap">
+                            {selectedRequestedNFTs.map(nft => (
+                              <NFTBadge
+                                key={nft.id}
+                                nft={nft}
+                                onClick={() => toggleNFTSelection(nft, false)}
+                                bg="success"
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </Form.Group>
+
+                    <Form.Group className="mb-3">
+                      <Form.Label>USDC to Request</Form.Label>
+                      <InputGroup>
+                        <Form.Control 
+                          type="number" 
+                          value={requestedUSDC} 
+                          onChange={(e) => setRequestedUSDC(e.target.value)}
+                          placeholder="Amount of USDC to request"
+                        />
+                        <InputGroup.Text>USDC</InputGroup.Text>
+                      </InputGroup>
+                    </Form.Group>
+                  </Col>
+                </Row>
+
+                <Row className="mt-4">
+                  <Col>
+                    <Card className="mb-3">
+                      <Card.Header as="h5">Offer Summary</Card.Header>
+                      <Card.Body>
+                        <Row>
+                          <Col md={6} className="border-end">
+                            <h6 className="text-primary">You are offering:</h6>
+                            <Card bg="light" className="mb-3">
+                              <Card.Body>
+                                <h6>NFTs:</h6>
+                                {selectedOfferedNFTs.length === 0 ? (
+                                  <p className="text-muted">No NFTs selected</p>
+                                ) : (
+                                  <ul className="list-unstyled">
+                                    {selectedOfferedNFTs.map(nft => (
+                                      <li key={nft.id}>
+                                        <OverlayTrigger
+                                          placement="top"
+                                          overlay={
+                                            <Tooltip id={`tooltip-offer-${nft.id}`}>
+                                              <img 
+                                                src={nft.metadata.image} 
+                                                alt={nft.metadata.name} 
+                                                style={{ maxWidth: '150px', maxHeight: '150px' }} 
+                                              />
+                                            </Tooltip>
+                                          }
+                                        >
+                                          <span className="text-primary">• {nft.metadata.name}</span>
+                                        </OverlayTrigger>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                                <h6 className="mt-3">USDC:</h6>
+                                <p>{offeredUSDC === '0' ? 'None' : `${offeredUSDC} USDC`}</p>
+                              </Card.Body>
+                            </Card>
+                          </Col>
+                          <Col md={6}>
+                            <h6 className="text-success">You are requesting:</h6>
+                            <Card bg="light" className="mb-3">
+                              <Card.Body>
+                                <h6>NFTs:</h6>
+                                {selectedRequestedNFTs.length === 0 ? (
+                                  <p className="text-muted">No NFTs selected</p>
+                                ) : (
+                                  <ul className="list-unstyled">
+                                    {selectedRequestedNFTs.map(nft => (
+                                      <li key={nft.id}>
+                                        <OverlayTrigger
+                                          placement="top"
+                                          overlay={
+                                            <Tooltip id={`tooltip-request-${nft.id}`}>
+                                              <img 
+                                                src={nft.metadata.image} 
+                                                alt={nft.metadata.name} 
+                                                style={{ maxWidth: '150px', maxHeight: '150px' }} 
+                                              />
+                                            </Tooltip>
+                                          }
+                                        >
+                                          <span className="text-success">• {nft.metadata.name}</span>
+                                        </OverlayTrigger>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                                <h6 className="mt-3">USDC:</h6>
+                                <p>{requestedUSDC === '0' ? 'None' : `${requestedUSDC} USDC`}</p>
+                              </Card.Body>
+                            </Card>
+                          </Col>
+                        </Row>
+                      </Card.Body>
+                    </Card>
+                  </Col>
+                </Row>
+
+                <Button variant="primary" onClick={makeOffer} className="mt-3">
+                  Make Offer
+                </Button>
+              </Form>
+            </Col>
+          </Row>
+        </>
       )}
     </Container>
   );
