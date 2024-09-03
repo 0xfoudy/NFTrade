@@ -9,6 +9,7 @@ import NFTradeABI from './NFTradeABI.json';
 import './Pokeball.css';
 import NFTBadge from './NFTBadge';
 import ReceivedOffers from './components/ReceivedOffers';
+import 'bootstrap-icons/font/bootstrap-icons.css';
 
 const ERC721ABI = [
   "function balanceOf(address owner) view returns (uint256)",
@@ -35,6 +36,7 @@ function App() {
   const [requestedUSDC, setRequestedUSDC] = useState('0');
   const [darkMode, setDarkMode] = useState(false);
   const [activeNFTTab, setActiveNFTTab] = useState('yourNFTs');
+  const [nftContract, setNftContract] = useState(null);
 
   useEffect(() => {
     const init = async () => {
@@ -73,6 +75,7 @@ function App() {
 
       const nftContractAddress = "0x251BE3A17Af4892035C37ebf5890F4a4D889dcAD";
       const nftContract = new ethers.Contract(nftContractAddress, ERC721ABI, provider);
+      setNftContract(nftContract);
 
       console.log("Fetching NFT balance for account:", account);
       const balance = await nftContract.balanceOf(account);
@@ -569,6 +572,8 @@ function App() {
     </>
   );
 
+  console.log('Parent component nftContract:', nftContract);
+
   return (
     <div className={darkMode ? 'dark-mode' : ''}>
       <ToastContainer position="top-right" theme={darkMode ? "dark" : "light"} />
@@ -616,7 +621,12 @@ function App() {
               {renderMakeOfferTab()}
             </Tab>
             <Tab eventKey="receivedOffers" title="Received Offers">
-              <ReceivedOffers contract={contract} account={account} darkMode={darkMode} />
+              <ReceivedOffers 
+                contract={contract} 
+                account={account} 
+                darkMode={darkMode} 
+                nftContract={nftContract}
+              />
             </Tab>
           </Tabs>
         ) : (
