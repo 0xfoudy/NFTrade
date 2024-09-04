@@ -30,49 +30,51 @@ body {
 }
 
 .app-header {
-  background-color: var(--header-bg);
+  padding: 1rem 0;
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
   color: var(--header-text);
-  padding: 20px 0;
-  margin-bottom: 30px;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+.dark-mode .app-header {
+  background-color: #343a40;
+  border-bottom-color: #495057;
+}
+
 .app-title {
-  font-size: 2.5rem;
+  font-size: 1.5rem;
   font-weight: bold;
   margin-bottom: 0;
 }
 
 .account-badge {
-  background-color: var(--primary-color);
-  color: var(--bg-color);
-  font-size: 0.9rem;
-  padding: 5px 10px;
-  border-radius: 20px;
+  background-color: #e9ecef;
+  color: #495057;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
   font-weight: bold;
 }
 
-/* New styles for the buttons */
-.app-header .btn-primary {
-  background-color: var(--primary-color);
-  border-color: var(--primary-color);
-  color: var(--bg-color);
-  font-weight: bold;
+.dark-mode .account-badge {
+  background-color: #495057;
+  color: #e9ecef;
 }
 
-.app-header .btn-primary:hover {
-  filter: brightness(90%);
+.disconnect-btn {
+  border-radius: 50%;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
 }
 
-.app-header .btn-danger {
-  background-color: var(--danger-color);
-  border-color: var(--danger-color);
-  color: var(--bg-color);
-  font-weight: bold;
-}
-
-.app-header .btn-danger:hover {
-  filter: brightness(90%);
+.disconnect-btn:hover {
+  transform: rotate(180deg);
 }
 
 .main-content {
@@ -175,4 +177,21 @@ body {
 
 .tab-content {
   padding-top: 20px;
+}
+
+/* Custom styles for the dark mode switch */
+.custom-switch .custom-control-label::before {
+  background-color: #ced4da;
+}
+
+.custom-switch .custom-control-input:checked ~ .custom-control-label::before {
+  background-color: #007bff;
+}
+
+.dark-mode .custom-switch .custom-control-label::before {
+  background-color: #495057;
+}
+
+.dark-mode .custom-switch .custom-control-input:checked ~ .custom-control-label::before {
+  background-color: #17a2b8;
 }

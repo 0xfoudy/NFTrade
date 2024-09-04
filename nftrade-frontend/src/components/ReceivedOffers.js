@@ -13,7 +13,7 @@ const OfferStatus = {
   Completed: 4
 };
 
-function ReceivedOffers({ contract, account, darkMode, nftContract }) {
+function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract, provider }) {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -187,7 +187,155 @@ function ReceivedOffers({ contract, account, darkMode, nftContract }) {
     }
   };
 
-  const handleAcceptOffer = (offerId) => handleTransaction('accept', offerId);
+  const handleAcceptOffer = async (offerId) => {
+    let toastId;
+    try {
+      const offer = offers.find(o => o.id === offerId);
+      if (!offer) throw new Error('Offer not found');
+
+      toastId = toast.loading('Preparing to accept offer...', { autoClose: false });
+
+      // Get the signer
+      const signer = await provider.getSigner(account);
+      const nftContractWithSigner = nftContract.connect(signer);
+      const usdcContractWithSigner = usdcContract.connect(signer);
+
+      // Approve each requested NFT
+      for (const nft of offer.requestedNFTs) {
+        const nftName = nft.name || `NFT #${nft.id}`;
+        const confirmApproval = await new Promise(resolve => {
+          toast.update(toastId, { 
+            render: (
+              <div>
+                <p>Approval needed for NFT: {nftName}</p>
+                <p>This approval allows the NFTrade contract to transfer this NFT when you accept the offer.</p>
+                <p>Do you want to proceed with the approval?</p>
+                <Button onClick={() => resolve(true)} variant="success" size="sm" className="me-2">Yes, Approve</Button>
+                <Button onClick={() => resolve(false)} variant="danger" size="sm">Cancel</Button>
+              </div>
+            ),
+            type: "info",
+            isLoading: false,
+            closeOnClick: false,
+            closeButton: false,
+            autoClose: false,
+          });
+        });
+
+        if (!confirmApproval) {
+          toast.update(toastId, { 
+            render: "Offer acceptance cancelled",
+            type: "info",
+            isLoading: false,
+            autoClose: 3000,
+          });
+          return;
+        }
+
+        toast.update(toastId, { 
+          render: `Approving NFT: ${nftName}...`, 
+          type: "info", 
+          isLoading: true 
+        });
+
+        const approvalTx = await nftContractWithSigner.approve(contract.target, nft.id);
+        await approvalTx.wait();
+      }
+
+      // Approve USDC if requested
+      if (offer.requestedUSDC.gt(0)) {
+        const usdcAmount = ethers.formatUnits(offer.requestedUSDC, 6);
+        const confirmUSDCApproval = await new Promise(resolve => {
+          toast.update(toastId, { 
+            render: (
+              <div>
+                <p>Approval needed for {usdcAmount} USDC</p>
+                <p>This approval allows the NFTrade contract to transfer USDC when you accept the offer.</p>
+                <p>Do you want to proceed with the approval?</p>
+                <Button onClick={() => resolve(true)} variant="success" size="sm" className="me-2">Yes, Approve</Button>
+                <Button onClick={() => resolve(false)} variant="danger" size="sm">Cancel</Button>
+              </div>
+            ),
+            type: "info",
+            isLoading: false,
+            closeOnClick: false,
+            closeButton: false,
+            autoClose: false,
+          });
+        });
+
+        if (!confirmUSDCApproval) {
+          toast.update(toastId, { 
+            render: "Offer acceptance cancelled",
+            type: "info",
+            isLoading: false,
+            autoClose: 3000,
+          });
+          return;
+        }
+
+        toast.update(toastId, { 
+          render: `Approving ${usdcAmount} USDC...`, 
+          type: "info", 
+          isLoading: true 
+        });
+
+        const usdcApprovalTx = await usdcContractWithSigner.approve(contract.target, offer.requestedUSDC);
+        await usdcApprovalTx.wait();
+      }
+
+      // Accept the offer
+      toast.update(toastId, { 
+        render: "Accepting offer...", 
+        type: "info", 
+        isLoading: true 
+      });
+
+      const tx = await contract.acceptOffer(offerId);
+      const polygonscanUrl = `https://polygonscan.com/tx/${tx.hash}`;
+
+      toast.update(toastId, { 
+        render: "Transaction sent. Waiting for confirmation...", 
+        type: "info", 
+        isLoading: true 
+      });
+
+      await tx.wait();
+      
+      toast.update(toastId, { 
+        render: (
+          <div>
+            Offer accepted successfully!
+            <br />
+            <a href={polygonscanUrl} target="_blank" rel="noopener noreferrer">
+              View on PolygonScan
+            </a>
+          </div>
+        ), 
+        type: "success",
+        isLoading: false,
+        autoClose: 5000
+      });
+
+      // Update the local state to reflect the change
+      fetchOffers();
+    } catch (error) {
+      console.error(`Error accepting offer:`, error);
+      toast.update(toastId, { 
+        render: (
+          <div>
+            Error accepting offer: {error.message}
+            <br />
+            Check console for details.
+          </div>
+        ),
+        type: "error",
+        isLoading: false,
+        autoClose: 5000
+      });
+    }
+  };
+
   const handleRejectOffer = (offerId) => handleTransaction('reject', offerId);
   const handleFinalizeOffer = (offerId) => handleTransaction('finalize', offerId);
 

@@ -11,6 +11,8 @@ import NFTBadge from './NFTBadge';
 import ReceivedOffers from './components/ReceivedOffers';
 import MadeOffers from './components/MadeOffers';
 import 'bootstrap-icons/font/bootstrap-icons.css';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faPowerOff, faSun, faMoon } from '@fortawesome/free-solid-svg-icons';
 
 const ERC721ABI = [
   "function balanceOf(address owner) view returns (uint256)",
@@ -47,6 +49,7 @@ function App() {
   const [activeNFTTab, setActiveNFTTab] = useState('yourNFTs');
   const [nftContract, setNftContract] = useState(null);
   const [usdcContract, setUsdcContract] = useState(null);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
     const init = async () => {
@@ -54,25 +57,59 @@ function App() {
         try {
           const provider = new ethers.BrowserProvider(window.ethereum);
           setProvider(provider);
-          console.log("Provider set:", provider);
 
-          const accounts = await provider.listAccounts();
-          if (accounts.length > 0) {
-            const signer = await provider.getSigner();
-            const address = await signer.getAddress();
-            setAccount(address);
-            console.log("Account set:", address);
-            setupContract(signer);
+          // Check if we have a stored account
+          const storedAccount = localStorage.getItem('connectedAccount');
+          if (storedAccount) {
+            // Request access to the user's accounts
+            await window.ethereum.request({ method: 'eth_requestAccounts' });
+            
+            const accounts = await provider.listAccounts();
+            if (accounts.length > 0) {
+              const currentAccount = accounts[0];
+              setAccount(currentAccount);
+              localStorage.setItem('connectedAccount', currentAccount);
+              const signer = await provider.getSigner();
+              setupContract(signer);
+            }
           }
+
+          // Listen for account changes
+          window.ethereum.on('accountsChanged', handleAccountsChanged);
         } catch (error) {
           console.error("Error in init:", error);
+        } finally {
+          setIsInitialized(true);
         }
       } else {
         console.log("Ethereum object not found, do you have MetaMask installed?");
+        setIsInitialized(true);
       }
     };
     init();
+
+    // Cleanup function
+    return () => {
+      if (window.ethereum) {
+        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+      }
+    };
   }, []);
+
+  const handleAccountsChanged = async (accounts) => {
+    if (accounts.length > 0) {
+      const newAccount = accounts[0];
+      setAccount(newAccount);
+      localStorage.setItem('connectedAccount', typeof newAccount === 'string' ? newAccount : newAccount.address);
+      const signer = await provider.getSigner();
+      setupContract(signer);
+    } else {
+      // User disconnected all accounts
+      setAccount(null);
+      setContract(null);
+      localStorage.removeItem('connectedAccount');
+    }
+  };
 
   useEffect(() => {
     if (provider) {
@@ -180,22 +217,8 @@ function App() {
   const connectWallet = async () => {
     if (window.ethereum) {
       try {
-        // Request access to the user's accounts
-        await window.ethereum.request({ method: 'eth_requestAccounts' });
-        
-        // Create a new Web3Provider using window.ethereum
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        setProvider(provider);
-        
-        // Get the signer
-        const signer = await provider.getSigner();
-        const address = await signer.getAddress();
-        setAccount(address);
-        
-        console.log("Wallet connected, account:", address);
-        
-        // Set up the contract with the new signer
-        setupContract(signer);
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        handleAccountsChanged(accounts);
       } catch (error) {
         console.error("Failed to connect wallet:", error);
         toast.error("Failed to connect wallet. Check console for details.");
@@ -209,6 +232,7 @@ function App() {
     setAccount(null);
     setContract(null);
     setOwnedNFTs([]);
+    localStorage.removeItem('connectedAccount');
   };
 
   const toggleNFTSelection = (nft, isOffered) => {
@@ -255,8 +279,9 @@ function App() {
       return;
     }
 
+    let toastId;
     try {
-      const toastId = toast.loading('Approving NFTs, USDC, and sending transaction...', { autoClose: false });
+      toastId = toast.loading('Preparing to make offer...', { autoClose: false });
 
       // Get the signer
       const signer = await provider.getSigner(account);
@@ -265,29 +290,85 @@ function App() {
 
       // Approve each offered NFT
       for (const nft of selectedOfferedNFTs) {
-        const approvalTx = await nftContractWithSigner.approve(contract.target, nft.id);
+        const nftName = nft.metadata?.name || `NFT #${nft.id}`;
+        const confirmApproval = await new Promise(resolve => {
+          toast.update(toastId, { 
+            render: (
+              <div>
+                <p>Approval needed for NFT: {nftName}</p>
+                <p>This approval allows the NFTrade contract to transfer this NFT when your offer is accepted.</p>
+                <p>Do you want to proceed with the approval?</p>
+                <Button onClick={() => resolve(true)} variant="success" size="sm" className="me-2">Yes, Approve</Button>
+                <Button onClick={() => resolve(false)} variant="danger" size="sm">Cancel</Button>
+              </div>
+            ),
+            type: "info",
+            isLoading: false,
+            closeOnClick: false,
+            closeButton: false,
+            autoClose: false,
+          });
+        });
+
+        if (!confirmApproval) {
+          toast.update(toastId, { 
+            render: "Offer creation cancelled",
+            type: "info",
+            isLoading: false,
+            autoClose: 3000,
+          });
+          return;
+        }
+
         toast.update(toastId, { 
-          render: `Approving NFT ${nft.id}...`, 
+          render: `Approving NFT: ${nftName}...`, 
           type: "info", 
           isLoading: true 
         });
+
+        const approvalTx = await nftContractWithSigner.approve(contract.target, nft.id);
         await approvalTx.wait();
       }
 
       // Approve USDC
       if (offeredUSDC !== '0') {
+        const confirmUSDCApproval = await new Promise(resolve => {
+          toast.update(toastId, { 
+            render: (
+              <div>
+                <p>Approval needed for {offeredUSDC} USDC</p>
+                <p>This approval allows the NFTrade contract to transfer USDC when your offer is accepted.</p>
+                <p>Do you want to proceed with the approval?</p>
+                <Button onClick={() => resolve(true)} variant="success" size="sm" className="me-2">Yes, Approve</Button>
+                <Button onClick={() => resolve(false)} variant="danger" size="sm">Cancel</Button>
+              </div>
+            ),
+            type: "info",
+            isLoading: false,
+            closeOnClick: false,
+            closeButton: false,
+            autoClose: false,
+          });
+        });
+
+        if (!confirmUSDCApproval) {
+          toast.update(toastId, { 
+            render: "Offer creation cancelled",
+            type: "info",
+            isLoading: false,
+            autoClose: 3000,
+          });
+          return;
+        }
+
         toast.update(toastId, { 
-          render: `Approving USDC...`, 
+          render: `Approving ${offeredUSDC} USDC...`, 
           type: "info", 
           isLoading: true 
         });
 
-        // Get current allowance
-        const currentAllowance = await usdcContractWithSigner.allowance(account, contract.target);
         const offeredAmount = ethers.parseUnits(offeredUSDC, 6);
-        const newAllowance = currentAllowance + offeredAmount;
-
-        const usdcApprovalTx = await usdcContractWithSigner.approve(contract.target, newAllowance);
+        const usdcApprovalTx = await usdcContractWithSigner.approve(contract.target, offeredAmount);
         await usdcApprovalTx.wait();
       }
 
@@ -338,13 +419,18 @@ function App() {
       setRequestedUSDC('0');
     } catch (error) {
       console.error('Error making offer:', error);
-      toast.error(
-        <div>
-          Error making offer: {error.message}
-          <br />
-          Check console for details.
-        </div>
-      );
+      toast.update(toastId, { 
+        render: (
+          <div>
+            Error making offer: {error.message}
+            <br />
+            Check console for details.
+          </div>
+        ),
+        type: "error",
+        isLoading: false,
+        autoClose: 5000
+      });
     }
   };
 
@@ -629,6 +715,16 @@ function App() {
 
   console.log('Parent component nftContract:', nftContract);
 
+  const getDisplayAddress = (account) => {
+    if (typeof account === 'string') {
+      return account.length > 10 ? `${account.slice(0, 6)}...${account.slice(-4)}` : account;
+    } else if (account && typeof account === 'object' && account.address) {
+      const address = account.address;
+      return address.length > 10 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
+    }
+    return 'Unknown';
+  };
+
   return (
     <div className={darkMode ? 'dark-mode' : ''}>
       <ToastContainer position="top-right" theme={darkMode ? "dark" : "light"} />
@@ -645,63 +741,74 @@ function App() {
               {account ? (
                 <div className="d-flex align-items-center justify-content-end">
                   <span className="account-badge me-3">
-                    {account.slice(0, 6)}...{account.slice(-4)}
+                    {getDisplayAddress(account)}
                   </span>
-                  <Button variant="danger" size="sm" onClick={disconnectWallet}>Disconnect</Button>
+                  <Button 
+                    variant="outline-danger" 
+                    size="sm" 
+                    onClick={disconnectWallet}
+                    className="disconnect-btn"
+                  >
+                    <FontAwesomeIcon icon={faPowerOff} />
+                  </Button>
                 </div>
               ) : (
                 <Button variant="primary" onClick={connectWallet}>Connect Wallet</Button>
               )}
-              <Button 
-                variant="outline-secondary" 
-                size="sm" 
-                className="ms-3"
-                onClick={() => setDarkMode(!darkMode)}
-              >
-                {darkMode ? '☀️' : '🌙'}
-              </Button>
+              <Form.Check 
+                type="switch"
+                id="dark-mode-switch"
+                label={<FontAwesomeIcon icon={darkMode ? faMoon : faSun} />}
+                checked={darkMode}
+                onChange={() => setDarkMode(!darkMode)}
+                className="ms-3 d-inline-block"
+              />
             </Col>
           </Row>
         </Container>
       </header>
 
-      <Container className="main-content">
-        {account ? (
-          <Tabs
-            activeKey={activeTab}
-            onSelect={(k) => setActiveTab(k)}
-            className="mb-3"
-          >
-            <Tab eventKey="makeOffer" title="Make Offer">
-              {renderMakeOfferTab()}
-            </Tab>
-            <Tab eventKey="receivedOffers" title="Received Offers">
-              <ReceivedOffers 
-                contract={contract} 
-                account={account} 
-                darkMode={darkMode} 
-                nftContract={nftContract}
-              />
-            </Tab>
-            <Tab eventKey="madeOffers" title="Made Offers">
-              <MadeOffers 
-                contract={contract} 
-                account={account} 
-                darkMode={darkMode} 
-                nftContract={nftContract}
-              />
-            </Tab>
-          </Tabs>
-        ) : (
-          <Row className="justify-content-center">
-            <Col md={6} className="text-center">
-              <h2>Welcome to NFTrade</h2>
-              <p>Connect your wallet to start trading NFTs.</p>
-              <Button variant="primary" size="lg" onClick={connectWallet}>Connect Wallet</Button>
-            </Col>
-          </Row>
-        )}
-      </Container>
+      {isInitialized && (
+        <Container className="main-content">
+          {account ? (
+            <Tabs
+              activeKey={activeTab}
+              onSelect={(k) => setActiveTab(k)}
+              className="mb-3"
+            >
+              <Tab eventKey="makeOffer" title="Make Offer">
+                {renderMakeOfferTab()}
+              </Tab>
+              <Tab eventKey="receivedOffers" title="Received Offers">
+                <ReceivedOffers 
+                  contract={contract} 
+                  account={account} 
+                  darkMode={darkMode} 
+                  nftContract={nftContract}
+                  usdcContract={usdcContract}
+                  provider={provider}
+                />
+              </Tab>
+              <Tab eventKey="madeOffers" title="Made Offers">
+                <MadeOffers 
+                  contract={contract} 
+                  account={account} 
+                  darkMode={darkMode} 
+                  nftContract={nftContract}
+                />
+              </Tab>
+            </Tabs>
+          ) : (
+            <Row className="justify-content-center">
+              <Col md={6} className="text-center">
+                <h2>Welcome to NFTrade</h2>
+                <p>Connect your wallet to start trading NFTs.</p>
+                <Button variant="primary" size="lg" onClick={connectWallet}>Connect Wallet</Button>
+              </Col>
+            </Row>
+          )}
+        </Container>
+      )}
     </div>
   );
 }
