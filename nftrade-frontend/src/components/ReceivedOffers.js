@@ -339,7 +339,101 @@ function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract
   };
 
   const handleRejectOffer = (offerId) => handleTransaction('reject', offerId);
-  const handleFinalizeOffer = (offerId) => handleTransaction('finalize', offerId);
+  const handleFinalizeOffer = async (offerId) => {
+    let toastId;
+    try {
+      const offer = offers.find(o => o.id === offerId);
+      if (!offer) throw new Error('Offer not found');
+
+      toastId = toast.loading('Preparing to finalize offer...', { autoClose: false });
+
+      // Get the signer
+      const signer = await provider.getSigner(account);
+      const nftContractWithSigner = nftContract.connect(signer);
+      const usdcContractWithSigner = usdcContract.connect(signer);
+
+      // Check and approve NFTs if necessary
+      for (const nft of offer.offeredNFTs) {
+        const isApproved = await nftContractWithSigner.isApprovedForAll(account, contract.target);
+        if (!isApproved) {
+          toast.update(toastId, { 
+            render: `Approving NFT: ${nft.name}...`, 
+            type: "info", 
+            isLoading: true 
+          });
+          const approvalTx = await nftContractWithSigner.setApprovalForAll(contract.target, true);
+          await approvalTx.wait();
+        }
+      }
+
+      // Check and approve USDC if necessary
+      let offeredUSDC = ethers.getBigInt(offer.offeredUSDC.toString());
+      if (offeredUSDC > 0n) {
+        const allowance = await usdcContractWithSigner.allowance(account, contract.target);
+        if (allowance < offeredUSDC) {
+          const usdcAmount = ethers.formatUnits(offeredUSDC, 6);
+          toast.update(toastId, { 
+            render: `Approving ${usdcAmount} USDC...`, 
+            type: "info", 
+            isLoading: true 
+          });
+          const usdcApprovalTx = await usdcContractWithSigner.approve(contract.target, offeredUSDC);
+          await usdcApprovalTx.wait();
+        }
+      }
+
+      // Now proceed with finalizing the offer
+      toast.update(toastId, { 
+        render: "Finalizing offer...", 
+        type: "info", 
+        isLoading: true 
+      });
+
+      const tx = await contract.sealDeal(offerId);
+      const polygonscanUrl = `https://polygonscan.com/tx/${tx.hash}`;
+
+      toast.update(toastId, { 
+        render: "Transaction sent. Waiting for confirmation...", 
+        type: "info", 
+        isLoading: true 
+      });
+
+      await tx.wait();
+      
+      toast.update(toastId, { 
+        render: (
+          <div>
+            Offer finalized successfully!
+            <br />
+            <a href={polygonscanUrl} target="_blank" rel="noopener noreferrer">
+              View on PolygonScan
+            </a>
+          </div>
+        ), 
+        type: "success",
+        isLoading: false,
+        autoClose: 5000
+      });
+
+      // Refresh offers after a short delay
+      setTimeout(() => fetchOffers(), 5000);
+
+    } catch (error) {
+      console.error(`Error finalizing offer:`, error);
+      toast.update(toastId, { 
+        render: (
+          <div>
+            Error finalizing offer: {error.message}
+            <br />
+            Check console for details.
+          </div>
+        ),
+        type: "error",
+        isLoading: false,
+        autoClose: 5000
+      });
+    }
+  };
 
   const renderNFTBadges = (nfts, isOffered) => {
     return (
@@ -416,7 +510,7 @@ function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract
             variant="primary" 
             onClick={() => handleFinalizeOffer(offer.id)}
           >
-            Finalize
+            Seal Deal
           </Button>
         );
       default:
