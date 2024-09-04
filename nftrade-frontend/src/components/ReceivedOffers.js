@@ -133,7 +133,7 @@ function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract
           tx = await contract.rejectOffer(offerId);
           break;
         case 'finalize':
-          tx = await contract.finalizeOffer(offerId);
+          tx = await contract.sealDeal(offerId);
           break;
         default:
           throw new Error('Invalid action');
@@ -243,8 +243,10 @@ function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract
       }
 
       // Approve USDC if requested
-      if (offer.requestedUSDC.gt(0)) {
-        const usdcAmount = ethers.formatUnits(offer.requestedUSDC, 6);
+      let requestedUSDC = ethers.getBigInt(offer.requestedUSDC.toString());
+
+      if (requestedUSDC > 0n) {
+        const usdcAmount = ethers.formatUnits(requestedUSDC, 6);
         const confirmUSDCApproval = await new Promise(resolve => {
           toast.update(toastId, { 
             render: (
@@ -280,7 +282,7 @@ function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract
           isLoading: true 
         });
 
-        const usdcApprovalTx = await usdcContractWithSigner.approve(contract.target, offer.requestedUSDC);
+        const usdcApprovalTx = await usdcContractWithSigner.approve(contract.target, requestedUSDC);
         await usdcApprovalTx.wait();
       }
 

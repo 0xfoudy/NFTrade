@@ -101,12 +101,18 @@ function App() {
       const newAccount = accounts[0];
       setAccount(newAccount);
       localStorage.setItem('connectedAccount', typeof newAccount === 'string' ? newAccount : newAccount.address);
-      const signer = await provider.getSigner();
+      
+      // Ensure we have an up-to-date provider
+      const updatedProvider = new ethers.BrowserProvider(window.ethereum);
+      setProvider(updatedProvider);
+      
+      const signer = await updatedProvider.getSigner();
       setupContract(signer);
     } else {
       // User disconnected all accounts
       setAccount(null);
       setContract(null);
+      setProvider(null);
       localStorage.removeItem('connectedAccount');
     }
   };
@@ -218,7 +224,11 @@ function App() {
     if (window.ethereum) {
       try {
         const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-        handleAccountsChanged(accounts);
+        if (accounts.length > 0) {
+          const updatedProvider = new ethers.BrowserProvider(window.ethereum);
+          setProvider(updatedProvider);
+          handleAccountsChanged(accounts);
+        }
       } catch (error) {
         console.error("Failed to connect wallet:", error);
         toast.error("Failed to connect wallet. Check console for details.");
@@ -462,16 +472,6 @@ function App() {
         <Col>
           <h2 className="section-title">Make Offer</h2>
           <Form>
-            <Form.Group className="mb-3">
-              <Form.Label>Offeree's Address</Form.Label>
-              <Form.Control 
-                type="text" 
-                value={offeree} 
-                onChange={(e) => setOfferee(e.target.value)}
-                placeholder="Enter the address of the person you want to trade with"
-              />
-            </Form.Group>
-
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">
@@ -641,6 +641,17 @@ function App() {
 
   const renderNFTList = (nfts, isOffered) => (
     <>
+      {!isOffered && (
+        <Form.Group className="mb-3">
+          <Form.Label>Offeree's Address</Form.Label>
+          <Form.Control 
+            type="text" 
+            value={offeree} 
+            onChange={(e) => setOfferee(e.target.value)}
+            placeholder="Enter the address of the person you want to trade with"
+          />
+        </Form.Group>
+      )}
       <InputGroup className="mb-3">
         <Form.Control
           placeholder="Search NFTs by name"

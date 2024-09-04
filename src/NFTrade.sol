@@ -79,7 +79,7 @@ contract NFTrade is Ownable{
     }
 
     function sealDeal(uint256 _offerID) public {
-        Offer memory offer = offersMapping[_offerID];
+        Offer storage offer = offersMapping[_offerID];
         require(offer.status == Status.Accepted, "Offer not yet accepted");
         require(offer.status != Status.Completed, "Offer already completed");
         require(msg.sender == offer.offeree || msg.sender == offer.offerer, "Caller unrelated to offer");
