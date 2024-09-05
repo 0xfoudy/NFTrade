@@ -45,7 +45,10 @@ function App() {
   const [nftError, setNftError] = useState(null);
   const [offeredUSDC, setOfferedUSDC] = useState('0');
   const [requestedUSDC, setRequestedUSDC] = useState('0');
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    // Initialize darkMode from localStorage, defaulting to false if not set
+    return localStorage.getItem('darkMode') === 'true';
+  });
   const [activeNFTTab, setActiveNFTTab] = useState('yourNFTs');
   const [nftContract, setNftContract] = useState(null);
   const [usdcContract, setUsdcContract] = useState(null);
@@ -214,7 +217,7 @@ function App() {
   }, [offeree, fetchOffereeNFTs]);
 
   const setupContract = (signer) => {
-    const contractAddress = "0x25C1515B882FaD578172300a839991507Be70b06";
+    const contractAddress = "0x5DbAFD4C585478BB55604FC78662263b266F71f0";
     const nfTradeContract = new ethers.Contract(contractAddress, NFTradeABI, signer);
     setContract(nfTradeContract);
     console.log("Contract set up");
@@ -445,8 +448,16 @@ function App() {
   };
 
   useEffect(() => {
+    // Update localStorage when darkMode changes
+    localStorage.setItem('darkMode', darkMode);
+    // Apply or remove dark mode class on body
     document.body.classList.toggle('dark-mode', darkMode);
   }, [darkMode]);
+
+  // Function to toggle dark mode
+  const toggleDarkMode = () => {
+    setDarkMode(prevMode => !prevMode);
+  };
 
   const renderMakeOfferTab = () => (
     <>
@@ -771,7 +782,7 @@ function App() {
                 id="dark-mode-switch"
                 label={<FontAwesomeIcon icon={darkMode ? faMoon : faSun} />}
                 checked={darkMode}
-                onChange={() => setDarkMode(!darkMode)}
+                onChange={toggleDarkMode}
                 className="ms-3 d-inline-block"
               />
             </Col>
