@@ -146,10 +146,10 @@ contract NFTest is Test {
         assertEq(abi.decode(result, (address)), user1);
 
         (,bytes memory amount) = USDC.call(abi.encodeWithSignature("balanceOf(address)", user1));
-        uint256 expectedUser1Balance = (10_000 * 10**6) - (1200 * 10**6) + (1100 * 10**6) - (1100 * 10**6 * 150 / 10_000);
+        uint256 expectedUser1Balance = (10_000 * 10**6) - (1200 * 10**6) + (1100 * 10**6) - (1100 * 10**6 * 300 / 10_000);
       //  assertEq(abi.decode(amount, (uint256)), expectedUser1Balance);
 
         (,amount) = USDC.call(abi.encodeWithSignature("balanceOf(address)", address(this)));
-        assertEq(abi.decode(amount, (uint256)), 345 * 10**5);
+        assertEq(abi.decode(amount, (uint256)), 690 * 10**5);
     }
 }

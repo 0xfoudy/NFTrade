@@ -8,7 +8,7 @@ contract NFTrade is Ownable{
     address constant public NFT_CONTRACT = 0x251BE3A17Af4892035C37ebf5890F4a4D889dcAD;
     address constant public USDC_CONTRACT = 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359;
     uint256 private currentID = 0;
-    uint8 public fees = 150;
+    uint16 public fees = 300;
     uint16 public FEES_DENUM = 10000;
 
     enum Status {
