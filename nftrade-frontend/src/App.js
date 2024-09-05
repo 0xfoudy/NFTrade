@@ -55,49 +55,34 @@ function App() {
   const [usdcContract, setUsdcContract] = useState(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isWalletConnected, setIsWalletConnected] = useState(false);
 
   useEffect(() => {
-    const init = async () => {
+    const checkWalletConnection = async () => {
       if (window.ethereum) {
         try {
           setIsConnecting(true);
           const provider = new ethers.BrowserProvider(window.ethereum);
           setProvider(provider);
 
-          // Check if we have a stored account
-          const storedAccount = localStorage.getItem('connectedAccount');
-          if (storedAccount) {
-            // Request access to the user's accounts
-            try {
-              await window.ethereum.request({ method: 'eth_requestAccounts' });
-              const accounts = await provider.listAccounts();
-              if (accounts.length > 0) {
-                const currentAccount = accounts[0];
-                if (currentAccount.toLowerCase() === storedAccount.toLowerCase()) {
-                  setAccount(currentAccount);
-                  const signer = await provider.getSigner();
-                  await setupContract(signer);
-                  console.log("Wallet reconnected:", currentAccount);
-                } else {
-                  console.log("Stored account doesn't match current account, reconnecting...");
-                  await connectWallet();
-                }
-              } else {
-                console.log("No accounts found, clearing stored account");
-                localStorage.removeItem('connectedAccount');
-              }
-            } catch (error) {
-              console.error("Error requesting accounts:", error);
-              localStorage.removeItem('connectedAccount');
-            }
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+          if (accounts.length > 0) {
+            const currentAccount = accounts[0];
+            setAccount(currentAccount);
+            setIsWalletConnected(true);
+            console.log("Wallet already connected:", currentAccount);
+            
+            // Setup contract after confirming connection
+            const signer = await provider.getSigner();
+            await setupContract(signer);
           }
 
           // Listen for account changes
           window.ethereum.on('accountsChanged', handleAccountsChanged);
-          window.ethereum.on('chainChanged', () => window.location.reload());
+          window.ethereum.on('chainChanged', handleChainChanged);
         } catch (error) {
-          console.error("Error in init:", error);
-          toast.error("Failed to initialize wallet connection. Please try reconnecting your wallet.");
+          console.error("Error checking wallet connection:", error);
+          toast.error("Failed to check wallet connection. Please try connecting manually.");
         } finally {
           setIsConnecting(false);
           setIsInitialized(true);
@@ -107,13 +92,14 @@ function App() {
         setIsInitialized(true);
       }
     };
-    init();
+
+    checkWalletConnection();
 
     // Cleanup function
     return () => {
       if (window.ethereum) {
         window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
-        window.ethereum.removeListener('chainChanged', () => {});
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
       }
     };
   }, []);
@@ -133,25 +119,27 @@ function App() {
   const handleAccountsChanged = async (accounts) => {
     if (accounts.length > 0) {
       const newAccount = accounts[0];
-      console.log("New account:", newAccount);
+      console.log("Account changed:", newAccount);
       setAccount(newAccount);
-      localStorage.setItem('connectedAccount', newAccount);
+      setIsWalletConnected(true);
       
-      // Ensure we have an up-to-date provider
-      const updatedProvider = new ethers.BrowserProvider(window.ethereum);
-      setProvider(updatedProvider);
-      
-      try {
-        const signer = await updatedProvider.getSigner();
-        await setupContract(signer);
-      } catch (error) {
-        console.error("Error getting signer in handleAccountsChanged:", error);
-        toast.error("Failed to update signer. Please try reconnecting your wallet.");
+      if (provider) {
+        try {
+          const signer = await provider.getSigner();
+          await setupContract(signer);
+        } catch (error) {
+          console.error("Error getting signer in handleAccountsChanged:", error);
+          toast.error("Failed to update signer. Please try reconnecting your wallet.");
+        }
       }
     } else {
       // User disconnected all accounts
       disconnectWallet();
     }
+  };
+
+  const handleChainChanged = () => {
+    window.location.reload();
   };
 
   useEffect(() => {
@@ -256,14 +244,11 @@ function App() {
         setIsConnecting(true);
         const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
         if (accounts.length > 0) {
-          const updatedProvider = new ethers.BrowserProvider(window.ethereum);
-          setProvider(updatedProvider);
           await handleAccountsChanged(accounts);
         }
       } catch (error) {
         console.error("Failed to connect wallet:", error);
         toast.error("Failed to connect wallet. Check console for details.");
-        localStorage.removeItem('connectedAccount');
       } finally {
         setIsConnecting(false);
       }
@@ -276,7 +261,7 @@ function App() {
     setAccount(null);
     setContract(null);
     setOwnedNFTs([]);
-    localStorage.removeItem('connectedAccount');
+    setIsWalletConnected(false);
     console.log("Wallet disconnected");
   };
 
@@ -846,7 +831,7 @@ function App() {
                 {/* You can add a loading spinner here */}
               </Col>
             </Row>
-          ) : account ? (
+          ) : isWalletConnected ? (
             <Tabs
               activeKey={activeTab}
               onSelect={(k) => setActiveTab(k)}
