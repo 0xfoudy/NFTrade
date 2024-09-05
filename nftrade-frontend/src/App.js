@@ -54,11 +54,13 @@ function App() {
   const [nftContract, setNftContract] = useState(null);
   const [usdcContract, setUsdcContract] = useState(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
     const init = async () => {
       if (window.ethereum) {
         try {
+          setIsConnecting(true);
           const provider = new ethers.BrowserProvider(window.ethereum);
           setProvider(provider);
 
@@ -66,23 +68,38 @@ function App() {
           const storedAccount = localStorage.getItem('connectedAccount');
           if (storedAccount) {
             // Request access to the user's accounts
-            await window.ethereum.request({ method: 'eth_requestAccounts' });
-            
-            const accounts = await provider.listAccounts();
-            if (accounts.length > 0) {
-              const currentAccount = accounts[0];
-              setAccount(currentAccount);
-              localStorage.setItem('connectedAccount', currentAccount);
-              const signer = await provider.getSigner();
-              setupContract(signer);
+            try {
+              await window.ethereum.request({ method: 'eth_requestAccounts' });
+              const accounts = await provider.listAccounts();
+              if (accounts.length > 0) {
+                const currentAccount = accounts[0];
+                if (currentAccount.toLowerCase() === storedAccount.toLowerCase()) {
+                  setAccount(currentAccount);
+                  const signer = await provider.getSigner();
+                  await setupContract(signer);
+                  console.log("Wallet reconnected:", currentAccount);
+                } else {
+                  console.log("Stored account doesn't match current account, reconnecting...");
+                  await connectWallet();
+                }
+              } else {
+                console.log("No accounts found, clearing stored account");
+                localStorage.removeItem('connectedAccount');
+              }
+            } catch (error) {
+              console.error("Error requesting accounts:", error);
+              localStorage.removeItem('connectedAccount');
             }
           }
 
           // Listen for account changes
           window.ethereum.on('accountsChanged', handleAccountsChanged);
+          window.ethereum.on('chainChanged', () => window.location.reload());
         } catch (error) {
           console.error("Error in init:", error);
+          toast.error("Failed to initialize wallet connection. Please try reconnecting your wallet.");
         } finally {
+          setIsConnecting(false);
           setIsInitialized(true);
         }
       } else {
@@ -96,28 +113,44 @@ function App() {
     return () => {
       if (window.ethereum) {
         window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        window.ethereum.removeListener('chainChanged', () => {});
       }
     };
   }, []);
 
+  const setupContract = async (signer) => {
+    try {
+      const contractAddress = "0x5DbAFD4C585478BB55604FC78662263b266F71f0";
+      const nfTradeContract = new ethers.Contract(contractAddress, NFTradeABI, signer);
+      setContract(nfTradeContract);
+      console.log("Contract set up successfully");
+    } catch (error) {
+      console.error("Error setting up contract:", error);
+      toast.error("Failed to set up the contract. Please try reconnecting your wallet.");
+    }
+  };
+
   const handleAccountsChanged = async (accounts) => {
     if (accounts.length > 0) {
       const newAccount = accounts[0];
+      console.log("New account:", newAccount);
       setAccount(newAccount);
-      localStorage.setItem('connectedAccount', typeof newAccount === 'string' ? newAccount : newAccount.address);
+      localStorage.setItem('connectedAccount', newAccount);
       
       // Ensure we have an up-to-date provider
       const updatedProvider = new ethers.BrowserProvider(window.ethereum);
       setProvider(updatedProvider);
       
-      const signer = await updatedProvider.getSigner();
-      setupContract(signer);
+      try {
+        const signer = await updatedProvider.getSigner();
+        await setupContract(signer);
+      } catch (error) {
+        console.error("Error getting signer in handleAccountsChanged:", error);
+        toast.error("Failed to update signer. Please try reconnecting your wallet.");
+      }
     } else {
       // User disconnected all accounts
-      setAccount(null);
-      setContract(null);
-      setProvider(null);
-      localStorage.removeItem('connectedAccount');
+      disconnectWallet();
     }
   };
 
@@ -217,25 +250,22 @@ function App() {
     }
   }, [offeree, fetchOffereeNFTs]);
 
-  const setupContract = (signer) => {
-    const contractAddress = "0x5DbAFD4C585478BB55604FC78662263b266F71f0";
-    const nfTradeContract = new ethers.Contract(contractAddress, NFTradeABI, signer);
-    setContract(nfTradeContract);
-    console.log("Contract set up");
-  };
-
   const connectWallet = async () => {
     if (window.ethereum) {
       try {
+        setIsConnecting(true);
         const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
         if (accounts.length > 0) {
           const updatedProvider = new ethers.BrowserProvider(window.ethereum);
           setProvider(updatedProvider);
-          handleAccountsChanged(accounts);
+          await handleAccountsChanged(accounts);
         }
       } catch (error) {
         console.error("Failed to connect wallet:", error);
         toast.error("Failed to connect wallet. Check console for details.");
+        localStorage.removeItem('connectedAccount');
+      } finally {
+        setIsConnecting(false);
       }
     } else {
       toast.error("Please install MetaMask!");
@@ -247,6 +277,7 @@ function App() {
     setContract(null);
     setOwnedNFTs([]);
     localStorage.removeItem('connectedAccount');
+    console.log("Wallet disconnected");
   };
 
   const toggleNFTSelection = (nft, isOffered) => {
@@ -290,6 +321,21 @@ function App() {
     }
     if (selectedOfferedNFTs.length === 0 && selectedRequestedNFTs.length === 0 && offeredUSDC === '0' && requestedUSDC === '0') {
       toast.error("Please select at least one NFT or enter an amount of USDC to offer or request.");
+      return;
+    }
+
+    // Verify signer
+    try {
+      const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
+      if (signerAddress.toLowerCase() !== account.toLowerCase()) {
+        console.error("Signer mismatch. Reconnecting wallet...");
+        await connectWallet();
+        return;
+      }
+    } catch (error) {
+      console.error("Error verifying signer:", error);
+      toast.error("Failed to verify wallet connection. Please try reconnecting your wallet.");
       return;
     }
 
@@ -793,7 +839,14 @@ function App() {
 
       {isInitialized && (
         <Container className="main-content">
-          {account ? (
+          {isConnecting ? (
+            <Row className="justify-content-center">
+              <Col md={6} className="text-center">
+                <h2>Connecting to wallet...</h2>
+                {/* You can add a loading spinner here */}
+              </Col>
+            </Row>
+          ) : account ? (
             <Tabs
               activeKey={activeTab}
               onSelect={(k) => setActiveTab(k)}
