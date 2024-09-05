@@ -354,24 +354,24 @@ function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract
 
       // Check and approve NFTs if necessary
       for (const nft of offer.offeredNFTs) {
-        const isApproved = await nftContractWithSigner.isApprovedForAll(account, contract.target);
-        if (!isApproved) {
+        const approvedAddress = await nftContractWithSigner.getApproved(nft.id);
+        if (approvedAddress.toLowerCase() !== contract.target.toLowerCase()) {
           toast.update(toastId, { 
             render: `Approving NFT: ${nft.name}...`, 
             type: "info", 
             isLoading: true 
           });
-          const approvalTx = await nftContractWithSigner.setApprovalForAll(contract.target, true);
+          const approvalTx = await nftContractWithSigner.approve(contract.target, nft.id);
           await approvalTx.wait();
         }
       }
 
       // Check and approve USDC if necessary
-      let offeredUSDC = ethers.getBigInt(offer.offeredUSDC.toString());
-      if (offeredUSDC > 0n) {
+      let offeredUSDC = ethers.BigNumber.from(offer.offeredUSDC.toString());
+      if (offeredUSDC.gt(0)) {
         const allowance = await usdcContractWithSigner.allowance(account, contract.target);
-        if (allowance < offeredUSDC) {
-          const usdcAmount = ethers.formatUnits(offeredUSDC, 6);
+        if (allowance.lt(offeredUSDC)) {
+          const usdcAmount = ethers.utils.formatUnits(offeredUSDC, 6);
           toast.update(toastId, { 
             render: `Approving ${usdcAmount} USDC...`, 
             type: "info", 
