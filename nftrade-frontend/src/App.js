@@ -18,7 +18,8 @@ const ERC721ABI = [
   "function balanceOf(address owner) view returns (uint256)",
   "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
   "function tokenURI(uint256 tokenId) view returns (string)",
-  "function approve(address operator, uint256 tokenId) public"
+  "function approve(address operator, uint256 tokenId) public",
+  "function getApproved(uint256 tokenId) public view returns (address)"
 ];
 
 const USDCABI = [

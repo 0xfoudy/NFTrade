@@ -367,11 +367,11 @@ function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract
       }
 
       // Check and approve USDC if necessary
-      let offeredUSDC = ethers.BigNumber.from(offer.offeredUSDC.toString());
-      if (offeredUSDC.gt(0)) {
+      let offeredUSDC = ethers.getBigInt(offer.offeredUSDC.toString());
+      if (offeredUSDC > 0n) {
         const allowance = await usdcContractWithSigner.allowance(account, contract.target);
-        if (allowance.lt(offeredUSDC)) {
-          const usdcAmount = ethers.utils.formatUnits(offeredUSDC, 6);
+        if (allowance < offeredUSDC) {
+          const usdcAmount = ethers.formatUnits(offeredUSDC, 6);
           toast.update(toastId, { 
             render: `Approving ${usdcAmount} USDC...`, 
             type: "info", 
