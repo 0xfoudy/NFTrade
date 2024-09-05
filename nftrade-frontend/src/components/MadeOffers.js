@@ -403,7 +403,7 @@ function MadeOffers({ contract, account, darkMode, nftContract, usdcContract, pr
         isLoading: true 
       });
 
-      const tx = await contract.finalizeOffer(offerId);
+      const tx = await contract.sealDeal(offerId);
       const polygonscanUrl = `https://polygonscan.com/tx/${tx.hash}`;
 
       toast.update(toastId, { 
@@ -417,7 +417,7 @@ function MadeOffers({ contract, account, darkMode, nftContract, usdcContract, pr
       toast.update(toastId, { 
         render: (
           <div>
-            Deal sealed successfully!
+            Offer finalized successfully!
             <br />
             <a href={polygonscanUrl} target="_blank" rel="noopener noreferrer">
               View on PolygonScan
