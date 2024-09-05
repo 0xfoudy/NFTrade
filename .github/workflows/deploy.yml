@@ -17,9 +17,18 @@ jobs:
       with:
         node-version: '14'  # Adjust this to match your project's Node version
 
+    - name: List directory contents
+      run: ls -la
+
+    - name: Display package.json contents
+      working-directory: ./nftrade-frontend
+      run: cat package.json
+
     - name: Install dependencies
       working-directory: ./nftrade-frontend
-      run: npm ci
+      run: |
+        npm cache clean --force
+        npm install
 
     - name: Build
       working-directory: ./nftrade-frontend
