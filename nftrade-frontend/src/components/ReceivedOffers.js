@@ -353,7 +353,7 @@ function ReceivedOffers({ contract, account, darkMode, nftContract, usdcContract
       const usdcContractWithSigner = usdcContract.connect(signer);
 
       // Check and approve NFTs if necessary
-      for (const nft of offer.offeredNFTs) {
+      for (const nft of offer.requestedNFTs) {
         const approvedAddress = await nftContractWithSigner.getApproved(nft.id);
         if (approvedAddress.toLowerCase() !== contract.target.toLowerCase()) {
           toast.update(toastId, { 
