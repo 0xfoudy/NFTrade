@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Badge, Alert, OverlayTrigger, Tooltip, Form } from 'react-bootstrap';
-import { formatUnits, ethers } from 'ethers';
+import { Card, Button, Badge, Alert, OverlayTrigger, Tooltip, Form, Modal } from 'react-bootstrap';
+import { ethers } from 'ethers';
 import { toast } from 'react-toastify';
 import 'bootstrap-icons/font/bootstrap-icons.css';
 
@@ -24,6 +24,8 @@ function MadeOffers({ contract, account, darkMode, nftContract, usdcContract, pr
     [OfferStatus.Canceled]: false,
     [OfferStatus.Completed]: false
   });
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [approvalItems, setApprovalItems] = useState([]);
 
   useEffect(() => {
     if (contract && account) {
@@ -233,7 +235,7 @@ function MadeOffers({ contract, account, darkMode, nftContract, usdcContract, pr
           {renderNFTBadges(nfts, isOffered)}
         </div>
         <div>
-          <strong>USDC:</strong> {formatUnits(usdc, 6)} USDC
+          <strong>USDC:</strong> {ethers.formatUnits(usdc, 6)} USDC
         </div>
       </div>
     );
@@ -271,64 +273,137 @@ function MadeOffers({ contract, account, darkMode, nftContract, usdcContract, pr
     );
   };
 
-  const handleSealDeal = async (offerId) => {
+  const checkAndUpdateApprovals = async (offer) => {
     let toastId;
     try {
-      toastId = toast.loading('Preparing to seal the deal...', { autoClose: false });
+      toastId = toast.loading('Checking approvals...', { autoClose: false });
 
-      if (!provider) {
-        throw new Error("Provider not initialized");
-      }
-
-      if (!contract || !nftContract || !usdcContract) {
-        throw new Error("One or more contracts are not initialized");
-      }
-
-      // Get signer
-      const signer = await provider.getSigner();
-      
-      // Create contract instances with signer
-      const contractWithSigner = contract.connect(signer);
+      const signer = await provider.getSigner(account);
       const nftContractWithSigner = nftContract.connect(signer);
       const usdcContractWithSigner = usdcContract.connect(signer);
 
-      const offer = await contractWithSigner.viewOffer(offerId);
-      
-      // Check NFT allowances
-      for (const nftId of offer.offeredNFTs) {
-        const approved = await nftContractWithSigner.getApproved(nftId);
-        if (approved !== contractWithSigner.target) {
+      // Check and approve NFTs if necessary
+      for (const nft of offer.offeredNFTs) {
+        const approvedAddress = await nftContractWithSigner.getApproved(nft.id);
+        if (approvedAddress.toLowerCase() !== contract.target.toLowerCase()) {
           toast.update(toastId, { 
-            render: `Approving NFT ${nftId}...`, 
+            render: `Approving NFT: ${nft.name}...`, 
             type: "info", 
             isLoading: true 
           });
-          const approveTx = await nftContractWithSigner.approve(contractWithSigner.target, nftId);
-          await approveTx.wait();
+          const approvalTx = await nftContractWithSigner.approve(contract.target, nft.id);
+          await approvalTx.wait();
         }
       }
 
-      // Check USDC allowance
-      if (offer.offeredUSDC > 0) {
-        const usdcAllowance = await usdcContractWithSigner.allowance(account, contractWithSigner.target);
-        if (usdcAllowance.lt(offer.offeredUSDC)) {
+      // Check and approve USDC if necessary
+      let offeredUSDC = ethers.getBigInt(offer.offeredUSDC.toString());
+      if (offeredUSDC > 0n) {
+        const allowance = await usdcContractWithSigner.allowance(account, contract.target);
+        if (allowance < offeredUSDC) {
+          const usdcAmount = ethers.formatUnits(offeredUSDC, 6);
           toast.update(toastId, { 
-            render: 'Approving USDC...', 
+            render: `Approving ${usdcAmount} USDC...`, 
             type: "info", 
             isLoading: true 
           });
-          const approveTx = await usdcContractWithSigner.approve(contractWithSigner.target, offer.offeredUSDC);
-          await approveTx.wait();
+          const usdcApprovalTx = await usdcContractWithSigner.approve(contract.target, offeredUSDC);
+          await usdcApprovalTx.wait();
         }
       }
 
+      toast.update(toastId, { 
+        render: "All necessary approvals are in place!",
+        type: "success",
+        isLoading: false,
+        autoClose: 3000
+      });
+    } catch (error) {
+      console.error('Error checking and updating approvals:', error);
+      toast.update(toastId, { 
+        render: `Error: ${error.message}. Check console for details.`,
+        type: "error",
+        isLoading: false,
+        autoClose: 5000
+      });
+    }
+  };
+
+  const handleSealDeal = async (offerId) => {
+    let toastId;
+    try {
+      toastId = toast.loading('Checking approvals...', { autoClose: false });
+
+      const offer = offers.find(o => o.id === offerId);
+      if (!offer) throw new Error('Offer not found');
+
+      const signer = await provider.getSigner(account);
+      const nftContractWithSigner = nftContract.connect(signer);
+      const usdcContractWithSigner = usdcContract.connect(signer);
+
+      const itemsNeedingApproval = [];
+
+      // Check approvals for the current user (offerer)
+      for (const nft of offer.offeredNFTs) {
+        const approvedAddress = await nftContractWithSigner.getApproved(nft.id);
+        if (approvedAddress.toLowerCase() !== contract.target.toLowerCase()) {
+          itemsNeedingApproval.push({ type: 'NFT', id: nft.id, name: nft.name });
+        }
+      }
+
+      if (offer.offeredUSDC > 0n) {
+        const allowance = await usdcContractWithSigner.allowance(account, contract.target);
+        if (allowance < offer.offeredUSDC) {
+          itemsNeedingApproval.push({ type: 'USDC', amount: offer.offeredUSDC });
+        }
+      }
+
+      // If there are items needing approval, show the approval modal
+      if (itemsNeedingApproval.length > 0) {
+        setApprovalItems(itemsNeedingApproval);
+        setShowApprovalModal(true);
+        toast.dismiss(toastId);
+        return;
+      }
+
+      // Check approvals for the counter party (offeree)
+      for (const nft of offer.requestedNFTs) {
+        const approvedAddress = await nftContractWithSigner.getApproved(nft.id);
+        if (approvedAddress.toLowerCase() !== contract.target.toLowerCase()) {
+          throw new Error(`The counter party hasn't approved NFT ${nft.name} for transfer`);
+        }
+      }
+
+      if (offer.requestedUSDC > 0n) {
+        const allowance = await usdcContractWithSigner.allowance(offer.to, contract.target);
+        if (allowance < offer.requestedUSDC) {
+          throw new Error(`The counter party hasn't approved enough USDC for transfer`);
+        }
+      }
+
+      // Proceed with sealing the deal
+      await sealDeal(offerId, toastId);
+
+    } catch (error) {
+      console.error(`Error sealing deal:`, error);
+      toast.update(toastId, { 
+        render: `Error sealing deal: ${error.message}`,
+        type: "error",
+        isLoading: false,
+        autoClose: 5000
+      });
+    }
+  };
+
+  const sealDeal = async (offerId, toastId) => {
+    try {
       toast.update(toastId, { 
         render: 'Sealing the deal...', 
         type: "info", 
         isLoading: true 
       });
 
-      const tx = await contractWithSigner.sealDeal(offerId);
+      const tx = await contract.finalizeOffer(offerId);
       const polygonscanUrl = `https://polygonscan.com/tx/${tx.hash}`;
 
       toast.update(toastId, { 
@@ -354,16 +429,47 @@ function MadeOffers({ contract, account, darkMode, nftContract, usdcContract, pr
         autoClose: 5000
       });
 
-      // Update the local state to reflect the change
-      setOffers(prevOffers => prevOffers.map(o => 
-        o.id === offerId ? { ...o, status: OfferStatus.Completed } : o
-      ));
-
+      fetchOffers(); // Refresh offers after successful sealing
     } catch (error) {
       console.error(`Error sealing deal:`, error);
       toast.update(toastId, { 
         render: `Error sealing deal: ${error.message}`,
         type: "error",
+        isLoading: false,
+        autoClose: 5000
+      });
+    }
+  };
+
+  const handleApprove = async () => {
+    let toastId = toast.loading('Processing approvals...', { autoClose: false });
+    try {
+      const signer = await provider.getSigner(account);
+      const nftContractWithSigner = nftContract.connect(signer);
+      const usdcContractWithSigner = usdcContract.connect(signer);
+
+      for (const item of approvalItems) {
+        if (item.type === 'NFT') {
+          await nftContractWithSigner.approve(contract.target, item.id);
+        } else if (item.type === 'USDC') {
+          await usdcContractWithSigner.approve(contract.target, item.amount);
+        }
+      }
+
+      toast.update(toastId, {
+        render: 'All items approved successfully!',
+        type: 'success',
+        isLoading: false,
+        autoClose: 3000
+      });
+
+      setShowApprovalModal(false);
+      setApprovalItems([]);
+    } catch (error) {
+      console.error('Error during approval:', error);
+      toast.update(toastId, {
+        render: `Error during approval: ${error.message}`,
+        type: 'error',
         isLoading: false,
         autoClose: 5000
       });
@@ -439,15 +545,48 @@ function MadeOffers({ contract, account, darkMode, nftContract, usdcContract, pr
                   </Button>
                 )}
                 {offer.status === OfferStatus.Accepted && (
-                  <Button variant="success" onClick={() => handleSealDeal(offer.id)}>
-                    Finalize
-                  </Button>
+                  <>
+                    <Button 
+                      variant="secondary" 
+                      onClick={() => checkAndUpdateApprovals(offer)}
+                      className="me-2"
+                    >
+                      Check Approvals
+                    </Button>
+                    <Button variant="success" onClick={() => handleSealDeal(offer.id)}>
+                      Finalize
+                    </Button>
+                  </>
                 )}
               </div>
             </Card.Body>
           </Card>
         ))
       )}
+      
+      <Modal show={showApprovalModal} onHide={() => setShowApprovalModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>Approval Required</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p>The following items need approval before sealing the deal:</p>
+          <ul>
+            {approvalItems.map((item, index) => (
+              <li key={index}>
+                {item.type === 'NFT' ? `NFT: ${item.name} (ID: ${item.id})` : `USDC: ${ethers.formatUnits(item.amount, 6)} USDC`}
+              </li>
+            ))}
+          </ul>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowApprovalModal(false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleApprove}>
+            Approve All
+          </Button>
+        </Modal.Footer>
+      </Modal>
     </div>
   );
 }
