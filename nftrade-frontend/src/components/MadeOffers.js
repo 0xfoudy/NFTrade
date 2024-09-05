@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Button, Badge, Alert, OverlayTrigger, Tooltip, Form } from 'react-bootstrap';
-import { formatUnits } from 'ethers';
+import { formatUnits, ethers } from 'ethers';
 import { toast } from 'react-toastify';
 import 'bootstrap-icons/font/bootstrap-icons.css';
 
@@ -13,7 +13,7 @@ const OfferStatus = {
   Completed: 4
 };
 
-function MadeOffers({ contract, account, darkMode, nftContract }) {
+function MadeOffers({ contract, account, darkMode, nftContract, usdcContract, provider }) {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -30,6 +30,9 @@ function MadeOffers({ contract, account, darkMode, nftContract }) {
       fetchOffers();
     }
   }, [contract, account]);
+
+  useEffect(() => {
+  }, [contract, nftContract, usdcContract]);
 
   const fetchOffers = async () => {
     if (!contract || !account) return;
@@ -268,6 +271,105 @@ function MadeOffers({ contract, account, darkMode, nftContract }) {
     );
   };
 
+  const handleSealDeal = async (offerId) => {
+    let toastId;
+    try {
+      toastId = toast.loading('Preparing to seal the deal...', { autoClose: false });
+
+      if (!provider) {
+        throw new Error("Provider not initialized");
+      }
+
+      if (!contract || !nftContract || !usdcContract) {
+        throw new Error("One or more contracts are not initialized");
+      }
+
+      // Get signer
+      const signer = await provider.getSigner();
+      
+      // Create contract instances with signer
+      const contractWithSigner = contract.connect(signer);
+      const nftContractWithSigner = nftContract.connect(signer);
+      const usdcContractWithSigner = usdcContract.connect(signer);
+
+      const offer = await contractWithSigner.viewOffer(offerId);
+      
+      // Check NFT allowances
+      for (const nftId of offer.offeredNFTs) {
+        const approved = await nftContractWithSigner.getApproved(nftId);
+        if (approved !== contractWithSigner.target) {
+          toast.update(toastId, { 
+            render: `Approving NFT ${nftId}...`, 
+            type: "info", 
+            isLoading: true 
+          });
+          const approveTx = await nftContractWithSigner.approve(contractWithSigner.target, nftId);
+          await approveTx.wait();
+        }
+      }
+
+      // Check USDC allowance
+      if (offer.offeredUSDC > 0) {
+        const usdcAllowance = await usdcContractWithSigner.allowance(account, contractWithSigner.target);
+        if (usdcAllowance.lt(offer.offeredUSDC)) {
+          toast.update(toastId, { 
+            render: 'Approving USDC...', 
+            type: "info", 
+            isLoading: true 
+          });
+          const approveTx = await usdcContractWithSigner.approve(contractWithSigner.target, offer.offeredUSDC);
+          await approveTx.wait();
+        }
+      }
+
+      toast.update(toastId, { 
+        render: 'Sealing the deal...', 
+        type: "info", 
+        isLoading: true 
+      });
+
+      const tx = await contractWithSigner.sealDeal(offerId);
+      const polygonscanUrl = `https://polygonscan.com/tx/${tx.hash}`;
+
+      toast.update(toastId, { 
+        render: "Transaction sent. Waiting for confirmation...", 
+        type: "info", 
+        isLoading: true 
+      });
+
+      await tx.wait();
+      
+      toast.update(toastId, { 
+        render: (
+          <div>
+            Deal sealed successfully!
+            <br />
+            <a href={polygonscanUrl} target="_blank" rel="noopener noreferrer">
+              View on PolygonScan
+            </a>
+          </div>
+        ), 
+        type: "success",
+        isLoading: false,
+        autoClose: 5000
+      });
+
+      // Update the local state to reflect the change
+      setOffers(prevOffers => prevOffers.map(o => 
+        o.id === offerId ? { ...o, status: OfferStatus.Completed } : o
+      ));
+
+    } catch (error) {
+      console.error(`Error sealing deal:`, error);
+      toast.update(toastId, { 
+        render: `Error sealing deal: ${error.message}`,
+        type: "error",
+        isLoading: false,
+        autoClose: 5000
+      });
+    }
+  };
+
   if (loading) {
     return <div>Loading offers and NFT data...</div>;
   }
@@ -334,6 +436,11 @@ function MadeOffers({ contract, account, darkMode, nftContract }) {
                 {offer.status === OfferStatus.Pending && (
                   <Button variant="danger" onClick={() => handleCancelOffer(offer.id)}>
                     Cancel Offer
+                  </Button>
+                )}
+                {offer.status === OfferStatus.Accepted && (
+                  <Button variant="success" onClick={() => handleSealDeal(offer.id)}>
+                    Finalize
                   </Button>
                 )}
               </div>

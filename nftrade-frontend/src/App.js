@@ -856,6 +856,8 @@ function App() {
                   account={account} 
                   darkMode={darkMode} 
                   nftContract={nftContract}
+                  usdcContract={usdcContract}
+                  provider={provider}
                 />
               </Tab>
             </Tabs>
