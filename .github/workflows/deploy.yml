@@ -18,14 +18,12 @@ jobs:
         node-version: '14'  # Adjust this to match your project's Node version
 
     - name: Install dependencies
-      run: |
-      cd nftrade-frontend
-      npm ci
+      working-directory: ./nftrade-frontend
+      run: npm ci
 
     - name: Build
-      run: |
-      cd nftrade-frontend
-      npm run build
+      working-directory: ./nftrade-frontend
+      run: npm run build
       env:
         CI: false  # This prevents treating warnings as errors
 
